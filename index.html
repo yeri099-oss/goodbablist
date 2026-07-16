@@ -167,6 +167,7 @@
   }
   table.order-table td{padding:11px 10px; border-bottom:1px solid var(--line); vertical-align:top; word-break:break-word;}
   table.order-table tr:hover td{background:#fafcff;}
+  table.order-table.list-table tbody tr{cursor:pointer;}
   .payment-badge{font-size:11.5px; font-weight:700; padding:3px 9px; border-radius:20px; display:inline-block; white-space:nowrap;}
   .payment-badge.immediate{background:var(--accent-soft); color:var(--accent);}
   .payment-badge.monthly{background:#fff3e0; color:#b5691a;}
@@ -221,6 +222,19 @@
   .modal-box .field label{display:block; font-size:12px; font-weight:600; color:var(--ink-soft); margin-bottom:6px;}
   .modal-box .field input,.modal-box .field select,.modal-box .field textarea{width:100%;}
   .modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:18px;}
+
+  /* '거래처 정보' 수정창에만 적용하는 따뜻한 색감 (문구가 아닌 색으로 표현하는 감성) */
+  #editModalBox{background:linear-gradient(180deg, #FFF4F1 0%, #FFFFFF 210px);}
+  #editModalBox h3{color:#B5646F;}
+  #editModalBox .modal-sub{color:#B99189;}
+  #editModalBox .field label{color:#B08A80;}
+  #editModalBox input:focus, #editModalBox select:focus, #editModalBox textarea:focus{
+    border-color:#E3A6A0; box-shadow:0 0 0 3px rgba(227,166,160,.28);
+  }
+  #editModalBox #editCancelBtn{border-color:#ecd6d1; color:#a9776b;}
+  #editModalBox #editCancelBtn:hover{background:#fdf1ef;}
+  #editModalBox #editSaveBtn{background:#B5646F;}
+  #editModalBox #editSaveBtn:hover{background:#9c4f59;}
 
   .confirm-box{max-width:360px; text-align:center;}
   .confirm-box .confirm-icon{
@@ -287,7 +301,7 @@
      ============================================================ -->
 <div class="overlay" id="editOverlay">
   <div class="modal-box" id="editModalBox">
-    <h3>발주 정보 수정</h3>
+    <h3>거래처 정보</h3>
     <p class="modal-sub" id="editModalSub"></p>
     <div class="field">
       <label>결제</label>
@@ -381,6 +395,7 @@ let confirmCallback = null;       // 확인 모달에서 "예"를 눌렀을 때 
 let editingOrderId = null;        // 현재 수정 모달에서 편집 중인 발주 문서 id
 let dragOrdererId = null;         // 발주자 드래그 정렬 시 현재 드래그 중인 문서 id
 let summarySortKey = 'payment';   // 요약탭(전체 사업장 통합) 정렬 기준
+let summarySearch = {type:'vendor', term:''}; // 요약탭 검색 상태
 
 /* ==================================================================================
    [3] 유틸 함수
@@ -542,10 +557,11 @@ function renderActiveTab(){
 function ordersOf(biz){ return orders.filter(o => o.business === biz); }
 
 function sortOrders(list, key){
-  // 클릭한 기준을 1순위로 하고, 나머지 두 항목을 보조 정렬 기준으로 사용합니다.
+  // 클릭한 기준을 1순위로 하고, 나머지 항목을 보조 정렬 기준으로 사용합니다.
   const order = key === 'payment' ? ['payment','vendor','orderer']
               : key === 'vendor'  ? ['vendor','payment','orderer']
-              : ['orderer','payment','vendor'];
+              : key === 'orderer' ? ['orderer','payment','vendor']
+              : ['business','payment','vendor','orderer']; // 'business' (사업장순)
   return [...list].sort((a,b)=>{
     for(const k of order){
       const c = koCompare(a[k], b[k]);
@@ -573,33 +589,41 @@ function ordererOptionsHtml(selected){
   ).join('');
 }
 
+// 발주 리스트의 한 행을 그리는 공용 함수.
+// showBusiness가 true면 맨 오른쪽에 사업장 열을 추가로 붙입니다 (요약탭에서 사용).
+function renderOrderRow(o, showBusiness){
+  return `
+    <tr onclick="openEditModal('${o.id}')">
+      <td><span class="payment-badge ${o.payment==='즉시결제'?'immediate':'monthly'}">${escapeHtml(o.payment||'-')}</span></td>
+      <td>${escapeHtml(o.vendor||'-')}</td>
+      <td>
+        <span class="memo-preview ${o.item?'':'empty'}">
+          ${o.item ? escapeHtml(truncate(o.item,60)) : '내용 없음'}
+        </span>
+      </td>
+      <td>
+        <span class="memo-preview ${o.method?'':'empty'}">
+          ${o.method ? escapeHtml(truncate(o.method,4)) : '내용 없음'}
+        </span>
+      </td>
+      <td>${escapeHtml(o.orderer||'-')}</td>
+      <td class="row-actions">
+        <button class="btn-ghost btn-sm btn-icon" title="수정" onclick="event.stopPropagation(); openEditModal('${o.id}')">✏️</button>
+        <button class="btn-danger btn-sm btn-icon" title="삭제" onclick="event.stopPropagation(); confirmDeleteOrder('${o.id}')">✕</button>
+      </td>
+      ${showBusiness ? `<td>${escapeHtml(o.business||'-')}</td>` : ''}
+    </tr>
+  `;
+}
+
 function renderBusinessTab(biz){
   const list = ordersOf(biz);
   const vendorNames = [...new Set(list.map(o=>o.vendor).filter(Boolean))];
   const sorted = sortOrders(filterOrders(list, searchByBiz[biz]), sortKeyByBiz[biz]);
   const search = searchByBiz[biz];
 
-  const rowsHtml = sorted.length ? sorted.map(o => `
-    <tr>
-      <td><span class="payment-badge ${o.payment==='즉시결제'?'immediate':'monthly'}">${escapeHtml(o.payment||'-')}</span></td>
-      <td>${escapeHtml(o.vendor||'-')}</td>
-      <td>
-        <span class="memo-preview ${o.item?'':'empty'}" onclick="openEditModal('${o.id}')">
-          ${o.item ? escapeHtml(truncate(o.item,60)) : '내용 없음'}
-        </span>
-      </td>
-      <td>
-        <span class="memo-preview ${o.method?'':'empty'}" onclick="openEditModal('${o.id}')">
-          ${o.method ? escapeHtml(truncate(o.method,4)) : '내용 없음'}
-        </span>
-      </td>
-      <td>${escapeHtml(o.orderer||'-')}</td>
-      <td class="row-actions">
-        <button class="btn-ghost btn-sm btn-icon" title="수정" onclick="openEditModal('${o.id}')">✏️</button>
-        <button class="btn-danger btn-sm btn-icon" title="삭제" onclick="confirmDeleteOrder('${o.id}')">✕</button>
-      </td>
-    </tr>
-  `).join('') : `<tr class="empty-row"><td colspan="6">등록된 발주처가 없습니다. 위 입력폼에서 추가해보세요.</td></tr>`;
+  const rowsHtml = sorted.length ? sorted.map(o => renderOrderRow(o, false)).join('')
+    : `<tr class="empty-row"><td colspan="6">등록된 발주처가 없습니다. 위 입력폼에서 추가해보세요.</td></tr>`;
 
   document.getElementById('tabContent').innerHTML = `
     <!-- 발주 신규 입력 폼 -->
@@ -803,37 +827,90 @@ document.getElementById('confirmYesBtn').addEventListener('click', ()=>{
    [10] 요약 탭 : 사업장별로 결제 / 거래처 / 발주자만 한눈에 표시
 ================================================================================== */
 function renderSummaryTab(){
-  const list = sortOrders(orders, summarySortKey);
-  const rows = list.length ? list.map(o=>`
-    <tr>
+  const filtered = filterOrders(orders, summarySearch);
+  const sorted = sortOrders(filtered, summarySortKey);
+
+  const rowsHtml = sorted.length ? sorted.map(o => `
+    <tr onclick="openEditModal('${o.id}')">
       <td><span class="payment-badge ${o.payment==='즉시결제'?'immediate':'monthly'}">${escapeHtml(o.payment||'-')}</span></td>
       <td>${escapeHtml(o.vendor||'-')}</td>
+      <td>
+        <span class="memo-preview ${o.item?'':'empty'}">
+          ${o.item ? escapeHtml(truncate(o.item,60)) : '내용 없음'}
+        </span>
+      </td>
+      <td>
+        <span class="memo-preview ${o.method?'':'empty'}">
+          ${o.method ? escapeHtml(truncate(o.method,4)) : '내용 없음'}
+        </span>
+      </td>
       <td>${escapeHtml(o.orderer||'-')}</td>
       <td>${escapeHtml(o.business||'-')}</td>
-    </tr>`).join('') : `<tr class="empty-row"><td colspan="4">데이터 없음</td></tr>`;
+      <td class="row-actions">
+        <button class="btn-ghost btn-sm btn-icon" title="수정" onclick="event.stopPropagation(); openEditModal('${o.id}')">✏️</button>
+        <button class="btn-danger btn-sm btn-icon" title="삭제" onclick="event.stopPropagation(); confirmDeleteOrder('${o.id}')">✕</button>
+      </td>
+    </tr>
+  `).join('') : `<tr class="empty-row"><td colspan="7">등록된 발주처가 없습니다.</td></tr>`;
 
   document.getElementById('tabContent').innerHTML = `
     <div class="panel">
-      <div class="summary-panel-head">
-        <h2>꽃밥이야기</h2>
-        <div class="summary-panel-controls">
-          <div class="sort-group">
-            <button class="${summarySortKey==='payment'?'active':''}" onclick="onSummarySortClick('payment')">결제순</button>
-            <button class="${summarySortKey==='vendor'?'active':''}" onclick="onSummarySortClick('vendor')">거래처순</button>
-            <button class="${summarySortKey==='orderer'?'active':''}" onclick="onSummarySortClick('orderer')">발주자순</button>
-          </div>
-          <button class="btn-ghost btn-sm" onclick="downloadSummaryExcel()">엑셀 다운로드</button>
+      <h2>꽃밥이야기</h2>
+      <div class="list-controls">
+        <div class="search-box">
+          <select id="summarySearchType">
+            <option value="vendor" ${summarySearch.type==='vendor'?'selected':''}>거래처</option>
+            <option value="item" ${summarySearch.type==='item'?'selected':''}>품목</option>
+            <option value="method" ${summarySearch.type==='method'?'selected':''}>발주방법</option>
+            <option value="orderer" ${summarySearch.type==='orderer'?'selected':''}>발주자</option>
+            <option value="business" ${summarySearch.type==='business'?'selected':''}>사업장</option>
+          </select>
+          <input type="text" id="summarySearchInput" placeholder="검색어 입력" value="${escapeHtml(summarySearch.term)}"
+                 onkeydown="if(event.key==='Enter'){ event.preventDefault(); onSummarySearchClick(); }">
+          <button class="btn-ghost btn-sm" onclick="onSummarySearchClick()">검색</button>
+          ${summarySearch.term ? `<button class="btn-ghost btn-sm search-reset" onclick="onSummarySearchClear()">초기화</button>` : ''}
         </div>
+        <div class="sort-group">
+          <button class="${summarySortKey==='payment'?'active':''}" onclick="onSummarySortClick('payment')">결제순</button>
+          <button class="${summarySortKey==='vendor'?'active':''}" onclick="onSummarySortClick('vendor')">거래처순</button>
+          <button class="${summarySortKey==='orderer'?'active':''}" onclick="onSummarySortClick('orderer')">발주자순</button>
+          <button class="${summarySortKey==='business'?'active':''}" onclick="onSummarySortClick('business')">사업장순</button>
+        </div>
+        <button class="btn-ghost btn-sm" onclick="downloadSummaryExcel()">엑셀 다운로드</button>
       </div>
-      <table class="order-table summary-table">
-        <thead><tr><th>결제</th><th>거래처</th><th>발주자</th><th>사업장</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div style="overflow-x:auto;">
+        <table class="order-table list-table">
+          <colgroup>
+            <col style="width:7%"><col style="width:12%"><col style="width:33%">
+            <col style="width:9%"><col style="width:9%"><col style="width:10%"><col style="width:10%">
+          </colgroup>
+          <thead><tr>
+            <th>결제</th>
+            <th>거래처</th>
+            <th>품목</th>
+            <th>발주방법</th>
+            <th>발주자</th>
+            <th>사업장</th>
+            <th>관리</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
     </div>
   `;
 }
 function onSummarySortClick(key){
   summarySortKey = key;
+  renderSummaryTab();
+}
+function onSummarySearchClick(){
+  const type = document.getElementById('summarySearchType').value;
+  const term = document.getElementById('summarySearchInput').value.trim();
+  summarySearch = { type, term };
+  renderSummaryTab();
+}
+function onSummarySearchClear(){
+  summarySearch = { type: summarySearch.type, term:'' };
   renderSummaryTab();
 }
 
@@ -1093,14 +1170,14 @@ async function downloadExcel(biz){
   addLog('엑셀 다운로드', biz);
 }
 
-// 요약 탭 : 전체 사업장 통합, 결제/거래처/발주자/사업장 4개 열
+// 요약 탭 : 전체 사업장 통합, 사업장별 리스트와 동일한 열 구성 + 맨 오른쪽에 사업장 열 (현재 검색/정렬 상태 기준)
 async function downloadSummaryExcel(){
-  const list = sortOrders(orders, summarySortKey);
+  const list = sortOrders(filterOrders(orders, summarySearch), summarySortKey);
   const wb = new ExcelJS.Workbook();
   buildStyledSheet(
     wb, '꽃밥이야기',
-    ['결제','거래처','발주자','사업장'],
-    list.map(o => [o.payment, o.vendor, o.orderer, o.business])
+    ['결제','거래처','품목','발주방법','발주자','사업장'],
+    list.map(o => [o.payment, o.vendor, o.item, o.method, o.orderer, o.business])
   );
   await triggerXlsxDownload(wb, `꽃밥이야기_요약_${todayStr()}.xlsx`);
   addLog('요약 엑셀 다운로드', '전체 사업장');
