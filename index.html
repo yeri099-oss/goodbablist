@@ -147,6 +147,19 @@
   @media (max-width:900px){ .order-form{grid-template-columns:repeat(2,1fr);} }
   @media (max-width:560px){ .order-form{grid-template-columns:1fr;} }
 
+  /* 발주자 다중 선택 (알약 모양 토글 버튼) */
+  .orderer-picker{
+    display:flex; flex-wrap:wrap; gap:6px; padding:8px;
+    border:1px solid var(--line-strong); border-radius:8px; background:#fff;
+    max-height:120px; overflow-y:auto;
+  }
+  .orderer-pill{
+    padding:5px 12px; border-radius:20px; border:1px solid var(--line-strong);
+    background:#fff; color:var(--ink-soft); font-size:12.5px; font-weight:600; cursor:pointer;
+  }
+  .orderer-pill:hover{border-color:var(--accent);}
+  .orderer-pill.selected{background:var(--accent); border-color:var(--accent); color:#fff;}
+
   /* 리스트 상단 컨트롤(검색/정렬/엑셀) */
   .list-controls{display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin:22px 0 12px;}
   .search-box{display:flex; gap:8px; flex:1; min-width:280px; flex-wrap:wrap;}
@@ -333,8 +346,8 @@
       <textarea id="editMethod" rows="4"></textarea>
     </div>
     <div class="field">
-      <label>발주자</label>
-      <select id="editOrderer"></select>
+      <label>발주자 (여러 명 선택 가능)</label>
+      <div class="orderer-picker" id="editOrdererPicker"></div>
     </div>
     <div class="modal-actions">
       <button class="btn-ghost" id="editCancelBtn">취소</button>
@@ -566,6 +579,17 @@ function renderActiveTab(){
 ================================================================================== */
 function ordersOf(biz){ return orders.filter(o => o.business === biz); }
 
+// 발주자는 이제 여러 명을 선택할 수 있어 배열(orderer: ['홍길동','김철수'])로 저장됩니다.
+// 예전에 한 명만 저장했던 문서(문자열)도 그대로 표시되도록 함께 처리하는 헬퍼입니다.
+function ordererList(o){
+  if(Array.isArray(o.orderer)) return o.orderer.filter(Boolean);
+  return o.orderer ? [o.orderer] : [];
+}
+function ordererDisplay(o){
+  const list = ordererList(o);
+  return list.length ? list.join(', ') : '-';
+}
+
 function sortOrders(list, key){
   // 클릭한 기준을 1순위로 하고, 나머지 항목을 보조 정렬 기준으로 사용합니다.
   const order = key === 'payment' ? ['payment','vendor','orderer']
@@ -574,7 +598,9 @@ function sortOrders(list, key){
               : ['business','payment','vendor','orderer']; // 'business' (사업장순)
   return [...list].sort((a,b)=>{
     for(const k of order){
-      const c = koCompare(a[k], b[k]);
+      const av = k === 'orderer' ? ordererList(a).join(', ') : a[k];
+      const bv = k === 'orderer' ? ordererList(b).join(', ') : b[k];
+      const c = koCompare(av, bv);
       if(c !== 0) return c;
     }
     return 0;
@@ -583,20 +609,31 @@ function sortOrders(list, key){
 function filterOrders(list, search){
   if(!search || !search.term) return list;
   const t = search.term.toLowerCase();
-  return list.filter(o => (o[search.type] || '').toLowerCase().includes(t));
+  return list.filter(o => {
+    if(search.type === 'orderer'){
+      return ordererList(o).some(n => n.toLowerCase().includes(t));
+    }
+    return (o[search.type] || '').toLowerCase().includes(t);
+  });
 }
 function truncate(str, n){
   if(!str) return '';
   return str.length > n ? str.slice(0,n) + '…' : str;
 }
 
-function ordererOptionsHtml(selected){
+function ordererPickerHtml(selected){
+  selected = selected || [];
   if(orderers.length === 0){
-    return `<option value="">(설정 탭에서 발주자를 등록하세요)</option>`;
+    return `<p class="empty-state" style="padding:2px 0;">설정 탭에서 발주자를 등록하세요</p>`;
   }
-  return orderers.map(o=>
-    `<option value="${escapeHtml(o.name)}" ${o.name===selected?'selected':''}>${escapeHtml(o.name)}</option>`
-  ).join('');
+  return orderers.map(o=>{
+    const isSel = selected.includes(o.name);
+    return `<button type="button" class="orderer-pill ${isSel?'selected':''}" onclick="this.classList.toggle('selected')" data-name="${escapeHtml(o.name)}">${escapeHtml(o.name)}</button>`;
+  }).join('');
+}
+// 특정 발주자 선택 영역(picker) 안에서 현재 선택된 이름들을 읽어옵니다.
+function readSelectedOrderers(containerId){
+  return [...document.querySelectorAll('#'+containerId+' .orderer-pill.selected')].map(el => el.dataset.name);
 }
 
 // 발주 리스트의 한 행을 그리는 공용 함수.
@@ -616,7 +653,7 @@ function renderOrderRow(o, showBusiness){
           ${o.method ? escapeHtml(truncate(o.method,4)) : '내용 없음'}
         </span>
       </td>
-      <td>${escapeHtml(o.orderer||'-')}</td>
+      <td>${escapeHtml(ordererDisplay(o))}</td>
       <td class="row-actions">
         <button class="btn-ghost btn-sm btn-icon" title="수정" onclick="event.stopPropagation(); openEditModal('${o.id}')">✏️</button>
         <button class="btn-danger btn-sm btn-icon" title="삭제" onclick="event.stopPropagation(); confirmDeleteOrder('${o.id}')">✕</button>
@@ -655,8 +692,8 @@ function renderBusinessTab(biz){
           </datalist>
         </div>
         <div class="field">
-          <label>발주자</label>
-          <select id="f_orderer">${ordererOptionsHtml()}</select>
+          <label>발주자 (여러 명 선택 가능)</label>
+          <div class="orderer-picker" id="f_orderer_picker">${ordererPickerHtml([])}</div>
         </div>
         <div class="field" style="grid-column:span 1;">
           <label>품목</label>
@@ -736,7 +773,7 @@ async function submitNewOrder(e, biz){
   e.preventDefault();
   const payment = document.getElementById('f_payment').value;
   const vendor = document.getElementById('f_vendor').value.trim();
-  const orderer = document.getElementById('f_orderer').value;
+  const orderer = readSelectedOrderers('f_orderer_picker');
   const item = document.getElementById('f_item').value.trim();
   const method = document.getElementById('f_method').value.trim();
   if(!vendor){ toast('거래처명을 입력해주세요.'); return; }
@@ -768,7 +805,7 @@ function openEditModal(orderId){
   document.getElementById('editVendor').value = o.vendor || '';
   document.getElementById('editItem').value = o.item || '';
   document.getElementById('editMethod').value = o.method || '';
-  document.getElementById('editOrderer').innerHTML = ordererOptionsHtml(o.orderer);
+  document.getElementById('editOrdererPicker').innerHTML = ordererPickerHtml(ordererList(o));
   document.getElementById('editOverlay').classList.add('show');
 }
 function closeEditModal(){
@@ -789,7 +826,7 @@ async function commitEdit(){
     vendor: document.getElementById('editVendor').value.trim(),
     item: document.getElementById('editItem').value.trim(),
     method: document.getElementById('editMethod').value.trim(),
-    orderer: document.getElementById('editOrderer').value,
+    orderer: readSelectedOrderers('editOrdererPicker'),
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy: currentUser.username
   };
@@ -859,7 +896,7 @@ function renderSummaryTab(){
           ${o.method ? escapeHtml(truncate(o.method,4)) : '내용 없음'}
         </span>
       </td>
-      <td>${escapeHtml(o.orderer||'-')}</td>
+      <td>${escapeHtml(ordererDisplay(o))}</td>
       <td>${bizBadge(o.business)}</td>
       <td class="row-actions">
         <button class="btn-ghost btn-sm btn-icon" title="수정" onclick="event.stopPropagation(); openEditModal('${o.id}')">✏️</button>
@@ -1207,7 +1244,7 @@ async function downloadExcel(biz){
   buildStyledSheet(
     wb, biz,
     ['결제','거래처','품목','발주방법','발주자'],
-    list.map(o => [o.payment, o.vendor, o.item, o.method, o.orderer])
+    list.map(o => [o.payment, o.vendor, o.item, o.method, ordererDisplay(o)])
   );
   await triggerXlsxDownload(wb, `${biz}_발주리스트_${todayStr()}.xlsx`);
   addLog('엑셀 다운로드', biz);
@@ -1220,7 +1257,7 @@ async function downloadSummaryExcel(){
   buildStyledSheet(
     wb, '꽃밥이야기',
     ['거래처','결제','품목','발주방법','발주자','사업장'],
-    list.map(o => [o.vendor, o.payment, o.item, o.method, o.orderer, o.business])
+    list.map(o => [o.vendor, o.payment, o.item, o.method, ordererDisplay(o), o.business])
   );
   await triggerXlsxDownload(wb, `꽃밥이야기_요약_${todayStr()}.xlsx`);
   addLog('요약 엑셀 다운로드', '전체 사업장');
