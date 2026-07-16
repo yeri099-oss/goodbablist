@@ -624,6 +624,16 @@ function truncate(str, n){
   return str.length > n ? str.slice(0,n) + '…' : str;
 }
 
+// 신규 등록 폼용 : 결제처럼 한 줄 드롭다운에서 한 명만 선택 (등록은 대부분 한 명이 담당하는 경우가 많아서)
+function ordererSelectHtml(selected){
+  if(orderers.length === 0){
+    return `<option value="">(설정 탭에서 발주자를 등록하세요)</option>`;
+  }
+  return `<option value="">선택 안함</option>` + orderers.map(o=>
+    `<option value="${escapeHtml(o.name)}" ${o.name===selected?'selected':''}>${escapeHtml(o.name)}</option>`
+  ).join('');
+}
+// 수정창용 : 여러 명을 동시에 선택할 수 있는 목록 (등록 후 담당자가 추가되는 경우 대응)
 function ordererPickerHtml(selected){
   selected = selected || [];
   if(orderers.length === 0){
@@ -696,7 +706,7 @@ function renderBusinessTab(biz){
         </div>
         <div class="field">
           <label>발주자</label>
-          <div class="orderer-picker" id="f_orderer_picker">${ordererPickerHtml([])}</div>
+          <select id="f_orderer">${ordererSelectHtml()}</select>
         </div>
         <div class="field" style="grid-column:span 1;">
           <label>품목</label>
@@ -776,7 +786,8 @@ async function submitNewOrder(e, biz){
   e.preventDefault();
   const payment = document.getElementById('f_payment').value;
   const vendor = document.getElementById('f_vendor').value.trim();
-  const orderer = readSelectedOrderers('f_orderer_picker');
+  const ordererVal = document.getElementById('f_orderer').value;
+  const orderer = ordererVal ? [ordererVal] : [];
   const item = document.getElementById('f_item').value.trim();
   const method = document.getElementById('f_method').value.trim();
   if(!vendor){ toast('거래처명을 입력해주세요.'); return; }
