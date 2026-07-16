@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>거래처 발주리스트 관리</title>
+
+<!--
+  ============================================================
+  [전체 구조 안내]
+  1. Firebase Firestore : 모든 데이터를 저장하는 온라인 DB.
+     - 이 앱은 자체 로그인(아이디/비밀번호)을 쓰기 때문에
+       Firebase Authentication은 사용하지 않고 Firestore만 사용합니다.
+     - 컬렉션(=데이터 저장 폴더) 4개를 사용합니다.
+       vendorApp_accounts  : 로그인 계정(아이디/비번/권한)
+       vendorApp_orderers  : 등록된 발주자 이름 목록
+       vendorApp_orders    : 실제 발주처 리스트(결제/거래처/품목/발주방법/발주자)
+       vendorApp_logs      : 관리자용 활동 로그
+  2. 여러 사람이 동시에 접속해도 Firestore의 실시간 리스너(onSnapshot)를
+     이용해서 누가 수정하든 화면이 즉시 갱신됩니다.
+  3. 이 파일 하나로 로그인 화면 + 전체 앱 화면 + 모달(수정/확인 창)까지
+     모두 포함되어 있습니다. (별도 서버 프로그램 필요 없음, 정적 호스팅 가능)
+  ============================================================
+-->
+
+<!-- Firebase SDK (Firestore 기능만 사용) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<!-- 엑셀 다운로드 기능(SheetJS) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- 한글 가독성이 좋은 웹폰트 -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" rel="stylesheet">
+
+<style>
+  /* ============================================================
+     [디자인 토큰]
+     실무용 도구이므로 화려한 장식보다 가독성과 명확한 상태 표시를
+     우선하는 무채색 톤 + 파란색 포인트 컬러 조합을 사용합니다.
+     ============================================================ */
+  :root{
+    --bg:#fafafa;
+    --panel:#ffffff;
+    --ink:#141414;
+    --ink-soft:#5b5b5b;
+    --line:#e4e4e4;
+    --line-strong:#cfcfcf;
+    --accent:#2454ff;
+    --accent-soft:#eef2ff;
+    --danger:#d1394a;
+    --danger-soft:#fdeeef;
+    --ok:#1f8a4c;
+    --radius:10px;
+    --shadow:0 8px 30px rgba(20,20,20,.08);
+    --mono: 'SFMono-Regular', Consolas, monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:'PretendardVariable','Pretendard',-apple-system,BlinkMacSystemFont,'Malgun Gothic',sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  button{
+    font-family:inherit; cursor:pointer; border:none; border-radius:8px;
+    padding:9px 16px; font-size:14px; font-weight:600; transition:.15s ease;
+  }
+  button:active{transform:scale(.97);}
+  input, select, textarea{
+    font-family:inherit; font-size:14px; padding:9px 11px;
+    border:1px solid var(--line-strong); border-radius:8px; background:#fff; color:var(--ink);
+    outline:none;
+  }
+  input:focus, select:focus, textarea:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+  textarea{resize:vertical; min-height:64px; line-height:1.5;}
+  .btn-primary{background:var(--ink); color:#fff;}
+  .btn-primary:hover{background:#000;}
+  .btn-accent{background:var(--accent); color:#fff;}
+  .btn-accent:hover{background:#1c44dd;}
+  .btn-ghost{background:#fff; color:var(--ink); border:1px solid var(--line-strong);}
+  .btn-ghost:hover{background:#f2f2f2;}
+  .btn-danger{background:var(--danger-soft); color:var(--danger);}
+  .btn-danger:hover{background:#fbdde1;}
+  .btn-sm{padding:6px 11px; font-size:12.5px; border-radius:6px;}
+
+  /* ---------- 로그인 화면 ---------- */
+  #loginScreen{
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(180deg,#111 0%, #1c1c1c 55%, #262626 100%);
+    padding:20px;
+  }
+  .login-box{
+    width:100%; max-width:380px; background:var(--panel); border-radius:16px;
+    padding:36px 32px; box-shadow:0 20px 60px rgba(0,0,0,.35);
+  }
+  .login-box h1{font-size:19px; margin:0 0 4px; letter-spacing:-.2px;}
+  .login-box p.sub{color:var(--ink-soft); font-size:13px; margin:0 0 24px;}
+  .login-box label{display:block; font-size:12.5px; color:var(--ink-soft); margin:14px 0 6px; font-weight:600;}
+  .login-box input{width:100%;}
+  .login-box .btn-primary{width:100%; margin-top:22px; padding:12px; font-size:15px; border-radius:8px;}
+  .login-error{color:var(--danger); font-size:12.5px; margin-top:10px; min-height:16px;}
+  .login-hint{margin-top:18px; font-size:11.5px; color:#9c9c9c; text-align:center; line-height:1.6;}
+
+  /* ---------- 앱 레이아웃 ---------- */
+  #appScreen{display:none; min-height:100vh; flex-direction:column;}
+  header.appbar{
+    background:var(--ink); color:#fff; padding:0 20px;
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;
+  }
+  .brand{display:flex; align-items:center; gap:10px; padding:14px 0;}
+  .brand .dot{width:9px; height:9px; border-radius:50%; background:var(--accent);}
+  .brand b{font-size:15px; letter-spacing:-.2px;}
+  .userbox{display:flex; align-items:center; gap:10px; font-size:12.5px; color:#cfcfcf; padding:14px 0;}
+  .userbox .role-badge{
+    background:var(--accent); color:#fff; font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:20px;
+  }
+  .userbox .role-badge.user{background:#565656;}
+  nav.tabs{
+    display:flex; gap:2px; background:#1e1e1e; padding:0 20px; overflow-x:auto;
+  }
+  nav.tabs button{
+    background:transparent; color:#b7b7b7; border-radius:0; padding:12px 16px;
+    font-size:13.5px; font-weight:600; border-bottom:2px solid transparent; white-space:nowrap;
+  }
+  nav.tabs button:hover{color:#fff;}
+  nav.tabs button.active{color:#fff; border-bottom-color:var(--accent);}
+
+  main#tabContent{flex:1; padding:24px 20px 60px; max-width:1180px; margin:0 auto; width:100%;}
+
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:20px; margin-bottom:18px;}
+  .panel h2{font-size:15px; margin:0 0 14px; letter-spacing:-.2px;}
+  .panel h3{font-size:13.5px; margin:0 0 12px; color:var(--ink-soft);}
+
+  /* 발주 입력 폼 */
+  .order-form{display:grid; grid-template-columns:repeat(5,1fr); gap:12px; align-items:start;}
+  .order-form .field label{display:block; font-size:12px; color:var(--ink-soft); margin-bottom:5px; font-weight:600;}
+  .order-form .field input,.order-form .field select,.order-form .field textarea{width:100%;}
+  .order-form .field-submit{grid-column:1 / -1; display:flex; justify-content:flex-end; gap:8px; margin-top:2px;}
+  @media (max-width:900px){ .order-form{grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:560px){ .order-form{grid-template-columns:1fr;} }
+
+  /* 리스트 상단 컨트롤(검색/정렬/엑셀) */
+  .list-controls{display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin:22px 0 12px;}
+  .search-box{flex:1; min-width:200px;}
+  .search-box input{width:100%;}
+  .sort-group{display:flex; gap:6px; background:#f1f1f1; padding:4px; border-radius:8px;}
+  .sort-group button{background:transparent; color:var(--ink-soft); padding:6px 12px; font-size:12.5px; border-radius:6px;}
+  .sort-group button.active{background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.12);}
+
+  table.order-table{width:100%; border-collapse:collapse; font-size:13.5px;}
+  table.order-table th{
+    text-align:left; font-size:11.5px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.3px;
+    padding:9px 10px; border-bottom:1px solid var(--line-strong);
+  }
+  table.order-table td{padding:11px 10px; border-bottom:1px solid var(--line); vertical-align:top;}
+  table.order-table tr:hover td{background:#fafcff;}
+  .payment-badge{font-size:11.5px; font-weight:700; padding:3px 9px; border-radius:20px; display:inline-block;}
+  .payment-badge.immediate{background:var(--accent-soft); color:var(--accent);}
+  .payment-badge.monthly{background:#fff3e0; color:#b5691a;}
+  .memo-preview{cursor:pointer; color:var(--ink); max-width:220px; display:block;}
+  .memo-preview:hover{color:var(--accent); text-decoration:underline;}
+  .memo-preview.empty{color:#b6b6b6; font-style:italic;}
+  .row-actions{display:flex; gap:6px; white-space:nowrap;}
+  .empty-row td{text-align:center; color:#9c9c9c; padding:34px 10px; font-size:13px;}
+
+  /* 요약 탭 */
+  .summary-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:16px;}
+  @media (max-width:980px){ .summary-grid{grid-template-columns:1fr;} }
+
+  /* 설정 탭 */
+  .settings-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  @media (max-width:900px){ .settings-grid{grid-template-columns:1fr;} }
+  .mini-form{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
+  .mini-form input,.mini-form select{flex:1; min-width:100px;}
+  .chip-list{display:flex; flex-direction:column; gap:6px; max-height:260px; overflow-y:auto;}
+  .chip-row{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    background:#f7f7f7; border-radius:8px; padding:8px 10px; font-size:13px;
+  }
+  .log-list{display:flex; flex-direction:column; gap:0; max-height:340px; overflow-y:auto; font-size:12.5px;}
+  .log-row{padding:9px 4px; border-bottom:1px solid var(--line); color:var(--ink-soft);}
+  .log-row b{color:var(--ink);}
+  .log-time{font-family:var(--mono); font-size:11px; color:#a5a5a5; margin-right:6px;}
+
+  /* ---------- 모달(수정창 / 확인창) ---------- */
+  .overlay{
+    display:none; position:fixed; inset:0; background:rgba(15,15,15,.55);
+    align-items:center; justify-content:center; z-index:100; padding:16px;
+  }
+  .overlay.show{display:flex;}
+  .modal-box{
+    background:#fff; border-radius:14px; width:100%; max-width:520px; padding:26px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); max-height:88vh; overflow-y:auto;
+  }
+  .modal-box h3{margin:0 0 4px; font-size:16px;}
+  .modal-box p.modal-sub{margin:0 0 18px; font-size:12.5px; color:var(--ink-soft);}
+  .modal-box .field{margin-bottom:14px;}
+  .modal-box .field label{display:block; font-size:12px; font-weight:600; color:var(--ink-soft); margin-bottom:6px;}
+  .modal-box .field input,.modal-box .field select,.modal-box .field textarea{width:100%;}
+  .modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:18px;}
+
+  .confirm-box{max-width:360px; text-align:center;}
+  .confirm-box .confirm-icon{
+    width:44px; height:44px; border-radius:50%; background:var(--accent-soft); color:var(--accent);
+    display:flex; align-items:center; justify-content:center; font-size:20px; margin:0 auto 14px; font-weight:700;
+  }
+  .confirm-box h3{font-size:15.5px;}
+  .confirm-box .modal-actions{justify-content:center;}
+
+  .toast{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:#fff; padding:11px 20px; border-radius:30px; font-size:13px;
+    box-shadow:0 10px 30px rgba(0,0,0,.25); z-index:200; opacity:0; pointer-events:none; transition:.25s ease;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(-6px);}
+
+  .empty-state{color:#9c9c9c; font-size:13px; padding:14px 4px;}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     [로그인 화면]
+     최초 접속 시 무조건 아이디/비밀번호를 입력해야 앱을 사용할 수 있습니다.
+     초기 계정: admin / 1234 (Firestore에 계정이 하나도 없으면 자동 생성됨)
+     ============================================================ -->
+<div id="loginScreen">
+  <div class="login-box">
+    <h1>거래처 발주리스트 관리</h1>
+    <p class="sub">사업장별 발주 정보를 팀과 함께 실시간으로 관리합니다.</p>
+    <form id="loginForm">
+      <label for="loginId">아이디</label>
+      <input id="loginId" type="text" autocomplete="username" required>
+      <label for="loginPw">비밀번호</label>
+      <input id="loginPw" type="password" autocomplete="current-password" required>
+      <div class="login-error" id="loginError"></div>
+      <button type="submit" class="btn-accent">로그인</button>
+    </form>
+    <div class="login-hint">최초 관리자 계정 &nbsp;admin&nbsp;/&nbsp;1234<br>로그인 후 설정 탭에서 계정을 추가/삭제할 수 있습니다.</div>
+  </div>
+</div>
+
+<!-- ============================================================
+     [메인 앱 화면] 로그인 성공 후에만 보여집니다.
+     ============================================================ -->
+<div id="appScreen">
+  <header class="appbar">
+    <div class="brand"><span class="dot"></span><b>거래처 발주리스트</b></div>
+    <div class="userbox">
+      <span id="userboxName"></span>
+      <span class="role-badge" id="userboxRole"></span>
+      <button class="btn-ghost btn-sm" id="logoutBtn">로그아웃</button>
+    </div>
+  </header>
+  <!-- 탭 메뉴: 사업장 3곳 + 요약 + 설정(관리자 전용) -->
+  <nav class="tabs" id="tabNav"></nav>
+  <!-- 실제 컨텐츠는 JS가 이 영역에 렌더링합니다 -->
+  <main id="tabContent"></main>
+</div>
+
+<!-- ============================================================
+     [수정 모달] 리스트의 "수정" 버튼 또는 품목/발주방법 클릭 시 열림.
+     저장을 누르면 곧바로 저장되지 않고 확인 모달을 한번 더 띄웁니다.
+     ============================================================ -->
+<div class="overlay" id="editOverlay">
+  <div class="modal-box" id="editModalBox">
+    <h3>발주 정보 수정</h3>
+    <p class="modal-sub" id="editModalSub"></p>
+    <div class="field">
+      <label>결제</label>
+      <select id="editPayment">
+        <option value="즉시결제">즉시결제</option>
+        <option value="월결제">월결제</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>거래처</label>
+      <input id="editVendor" type="text">
+    </div>
+    <div class="field">
+      <label>품목 (자유롭게 메모하듯 작성)</label>
+      <textarea id="editItem" rows="4"></textarea>
+    </div>
+    <div class="field">
+      <label>발주방법 (자유롭게 메모하듯 작성)</label>
+      <textarea id="editMethod" rows="4"></textarea>
+    </div>
+    <div class="field">
+      <label>발주자</label>
+      <select id="editOrderer"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="editCancelBtn">취소</button>
+      <button class="btn-accent" id="editSaveBtn">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     [공용 확인 모달] 화면 정중앙에 "정말 진행하시겠습니까?" 형태로 뜹니다.
+     수정 저장 / 삭제 / 계정삭제 / 발주자삭제 등에서 재사용합니다.
+     ============================================================ -->
+<div class="overlay" id="confirmOverlay">
+  <div class="modal-box confirm-box">
+    <div class="confirm-icon">!</div>
+    <h3 id="confirmMessage">진행하시겠습니까?</h3>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="confirmNoBtn">아니오</button>
+      <button class="btn-accent" id="confirmYesBtn">예</button>
+    </div>
+  </div>
+</div>
+
+<!-- 저장/오류 등 짧은 알림용 토스트 -->
+<div class="toast" id="toast"></div>
+
+<script>
+/* ==================================================================================
+   [1] Firebase 초기화
+   대표님이 사용 중인 Firebase 프로젝트(trip-84bd3)를 그대로 사용하되,
+   기존 여행앱 데이터와 섞이지 않도록 컬렉션 이름 앞에 "vendorApp_" 접두사를
+   붙여서 완전히 분리된 저장공간(=DB 폴더)으로 사용합니다.
+================================================================================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyCIvN2Y1a9ByNmz4UpgdmaTFrd5SAYZZGY",
+  authDomain: "trip-84bd3.firebaseapp.com",
+  projectId: "trip-84bd3",
+  storageBucket: "trip-84bd3.firebasestorage.app",
+  messagingSenderId: "830387988854",
+  appId: "1:830387988854:web:ee337d3ca69587c114b257"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// 이 앱 전용 컬렉션(=DB 폴더) 이름
+const COL_ACCOUNTS = 'vendorApp_accounts';
+const COL_ORDERERS = 'vendorApp_orderers';
+const COL_ORDERS   = 'vendorApp_orders';
+const COL_LOGS     = 'vendorApp_logs';
+
+// 관리할 3개 사업장
+const BUSINESSES = ['꽃밥마켓', '꽃밥에피다', '보자기꽃밥'];
+
+/* ==================================================================================
+   [2] 전역 상태값
+================================================================================== */
+let currentUser = null;          // {username, role} - 로그인한 사용자
+let accounts = [];               // 전체 계정 목록 (실시간 동기화)
+let orderers = [];                // 등록된 발주자 목록
+let orders = [];                  // 전체 발주 리스트(모든 사업장 포함)
+let logs = [];                    // 활동 로그
+let activeTab = BUSINESSES[0];    // 현재 열려있는 탭
+let sortKeyByBiz = {};            // 사업장별 현재 정렬 기준
+let searchByBiz = {};             // 사업장별 현재 검색어
+BUSINESSES.forEach(b => { sortKeyByBiz[b] = 'payment'; searchByBiz[b] = ''; });
+
+let confirmCallback = null;       // 확인 모달에서 "예"를 눌렀을 때 실행할 함수
+let editingOrderId = null;        // 현재 수정 모달에서 편집 중인 발주 문서 id
+
+/* ==================================================================================
+   [3] 유틸 함수
+================================================================================== */
+// 사용자가 입력한 텍스트를 화면에 그대로 넣을 때 HTML 특수문자로 인한 깨짐/오류를 방지
+function escapeHtml(str){
+  if(str === undefined || str === null) return '';
+  return String(str)
+    .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+    .replaceAll('"','&quot;').replaceAll("'",'&#39;');
+}
+// Firestore Timestamp -> 화면표시용 문자열
+function fmtDate(ts){
+  if(!ts || !ts.toDate) return '-';
+  return ts.toDate().toLocaleString('ko-KR', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(()=> t.classList.remove('show'), 2200);
+}
+// 한글 가나다순 비교
+function koCompare(a,b){ return String(a||'').localeCompare(String(b||''), 'ko'); }
+
+// 활동 로그 기록 (관리자 설정탭 하단에 노출됨)
+function addLog(action, detail){
+  db.collection(COL_LOGS).add({
+    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    username: currentUser ? currentUser.username : '알수없음',
+    role: currentUser ? currentUser.role : '-',
+    action, detail: detail || ''
+  }).catch(err => console.error('로그 기록 실패', err));
+}
+
+/* ==================================================================================
+   [4] 로그인 / 로그아웃
+================================================================================== */
+// 최초 실행 시 계정이 하나도 없으면 기본 관리자 계정(admin/1234)을 자동 생성
+async function seedAdminIfNeeded(){
+  const snap = await db.collection(COL_ACCOUNTS).limit(1).get();
+  if(snap.empty){
+    await db.collection(COL_ACCOUNTS).add({
+      username:'admin', password:'1234', role:'admin',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }
+}
+
+document.getElementById('loginForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const id = document.getElementById('loginId').value.trim();
+  const pw = document.getElementById('loginPw').value;
+  const errBox = document.getElementById('loginError');
+  errBox.textContent = '';
+  try{
+    await seedAdminIfNeeded();
+    const snap = await db.collection(COL_ACCOUNTS).where('username','==', id).limit(1).get();
+    if(snap.empty){ errBox.textContent = '존재하지 않는 아이디입니다.'; return; }
+    const doc = snap.docs[0];
+    const data = doc.data();
+    if(data.password !== pw){ errBox.textContent = '비밀번호가 올바르지 않습니다.'; return; }
+    currentUser = { username: data.username, role: data.role };
+    sessionStorage.setItem('vendorApp_session', JSON.stringify(currentUser));
+    enterApp();
+    addLog('로그인', `${data.username} 로그인`);
+  }catch(err){
+    console.error(err);
+    errBox.textContent = '로그인 중 오류가 발생했습니다. 네트워크 상태를 확인해주세요.';
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', ()=>{
+  addLog('로그아웃', `${currentUser.username} 로그아웃`);
+  sessionStorage.removeItem('vendorApp_session');
+  currentUser = null;
+  document.getElementById('appScreen').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginId').value = '';
+  document.getElementById('loginPw').value = '';
+});
+
+// 브라우저 탭을 새로고침해도 같은 탭 안에서는 로그인이 유지되도록 세션스토리지 사용
+function tryRestoreSession(){
+  const raw = sessionStorage.getItem('vendorApp_session');
+  if(raw){
+    try{ currentUser = JSON.parse(raw); enterApp(); }catch(e){ /* ignore */ }
+  }
+}
+
+function enterApp(){
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('appScreen').style.display = 'flex';
+  document.getElementById('userboxName').textContent = currentUser.username;
+  const roleBadge = document.getElementById('userboxRole');
+  roleBadge.textContent = currentUser.role === 'admin' ? '관리자' : '일반';
+  roleBadge.className = 'role-badge' + (currentUser.role === 'admin' ? '' : ' user');
+  buildTabNav();
+  switchTab(activeTab);
+  startRealtimeListeners();
+}
+
+/* ==================================================================================
+   [5] 실시간 데이터 동기화 (Firestore onSnapshot)
+   누군가 데이터를 추가/수정/삭제하면 접속해 있는 모든 사람 화면에 즉시 반영됩니다.
+================================================================================== */
+function startRealtimeListeners(){
+  db.collection(COL_ORDERS).onSnapshot(snap=>{
+    orders = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    renderActiveTab();
+  });
+  db.collection(COL_ORDERERS).orderBy('name').onSnapshot(snap=>{
+    orderers = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    renderActiveTab();
+  });
+  db.collection(COL_ACCOUNTS).onSnapshot(snap=>{
+    accounts = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    renderActiveTab();
+  });
+  db.collection(COL_LOGS).orderBy('timestamp','desc').limit(150).onSnapshot(snap=>{
+    logs = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    renderActiveTab();
+  });
+}
+
+/* ==================================================================================
+   [6] 상단 탭 메뉴 구성
+================================================================================== */
+function buildTabNav(){
+  const nav = document.getElementById('tabNav');
+  const tabs = [...BUSINESSES, '요약'];
+  if(currentUser.role === 'admin') tabs.push('설정');
+  nav.innerHTML = tabs.map(t=>`<button data-tab="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('');
+  nav.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('click', ()=> switchTab(btn.dataset.tab));
+  });
+}
+function switchTab(tab){
+  activeTab = tab;
+  document.querySelectorAll('#tabNav button').forEach(b=>{
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  renderActiveTab();
+}
+function renderActiveTab(){
+  if(!currentUser) return;
+  if(BUSINESSES.includes(activeTab)) renderBusinessTab(activeTab);
+  else if(activeTab === '요약') renderSummaryTab();
+  else if(activeTab === '설정') renderSettingsTab();
+}
+
+/* ==================================================================================
+   [7] 사업장별 발주 탭 렌더링
+================================================================================== */
+function ordersOf(biz){ return orders.filter(o => o.business === biz); }
+
+function sortOrders(list, key){
+  // 클릭한 기준을 1순위로 하고, 나머지 두 항목을 보조 정렬 기준으로 사용합니다.
+  const order = key === 'payment' ? ['payment','vendor','orderer']
+              : key === 'vendor'  ? ['vendor','payment','orderer']
+              : ['orderer','payment','vendor'];
+  return [...list].sort((a,b)=>{
+    for(const k of order){
+      const c = koCompare(a[k], b[k]);
+      if(c !== 0) return c;
+    }
+    return 0;
+  });
+}
+function filterOrders(list, term){
+  if(!term) return list;
+  const t = term.toLowerCase();
+  return list.filter(o =>
+    (o.vendor||'').toLowerCase().includes(t) ||
+    (o.item||'').toLowerCase().includes(t) ||
+    (o.method||'').toLowerCase().includes(t) ||
+    (o.orderer||'').toLowerCase().includes(t) ||
+    (o.payment||'').toLowerCase().includes(t)
+  );
+}
+function truncate(str, n){
+  if(!str) return '';
+  return str.length > n ? str.slice(0,n) + '…' : str;
+}
+
+function ordererOptionsHtml(selected){
+  if(orderers.length === 0){
+    return `<option value="">(설정 탭에서 발주자를 등록하세요)</option>`;
+  }
+  return orderers.map(o=>
+    `<option value="${escapeHtml(o.name)}" ${o.name===selected?'selected':''}>${escapeHtml(o.name)}</option>`
+  ).join('');
+}
+
+function renderBusinessTab(biz){
+  const list = ordersOf(biz);
+  const vendorNames = [...new Set(list.map(o=>o.vendor).filter(Boolean))];
+  const sorted = sortOrders(filterOrders(list, searchByBiz[biz]), sortKeyByBiz[biz]);
+
+  const rowsHtml = sorted.length ? sorted.map(o => `
+    <tr>
+      <td><span class="payment-badge ${o.payment==='즉시결제'?'immediate':'monthly'}">${escapeHtml(o.payment||'-')}</span></td>
+      <td>${escapeHtml(o.vendor||'-')}</td>
+      <td>
+        <span class="memo-preview ${o.item?'':'empty'}" onclick="openEditModal('${o.id}')">
+          ${o.item ? escapeHtml(truncate(o.item,26)) : '내용 없음 (클릭하여 작성)'}
+        </span>
+      </td>
+      <td>
+        <span class="memo-preview ${o.method?'':'empty'}" onclick="openEditModal('${o.id}')">
+          ${o.method ? escapeHtml(truncate(o.method,26)) : '내용 없음 (클릭하여 작성)'}
+        </span>
+      </td>
+      <td>${escapeHtml(o.orderer||'-')}</td>
+      <td class="row-actions">
+        <button class="btn-ghost btn-sm" onclick="openEditModal('${o.id}')">수정</button>
+        <button class="btn-danger btn-sm" onclick="confirmDeleteOrder('${o.id}')">삭제</button>
+      </td>
+    </tr>
+  `).join('') : `<tr class="empty-row"><td colspan="6">등록된 발주처가 없습니다. 위 입력폼에서 추가해보세요.</td></tr>`;
+
+  document.getElementById('tabContent').innerHTML = `
+    <!-- 발주 신규 입력 폼 -->
+    <div class="panel">
+      <h2>${escapeHtml(biz)} · 발주처 등록</h2>
+      <form class="order-form" id="orderForm">
+        <div class="field">
+          <label>결제</label>
+          <select id="f_payment" required>
+            <option value="즉시결제">즉시결제</option>
+            <option value="월결제">월결제</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>거래처</label>
+          <input id="f_vendor" type="text" list="vendorList_${biz}" placeholder="거래처명 입력" required>
+          <datalist id="vendorList_${biz}">
+            ${vendorNames.map(v=>`<option value="${escapeHtml(v)}">`).join('')}
+          </datalist>
+        </div>
+        <div class="field">
+          <label>발주자</label>
+          <select id="f_orderer">${ordererOptionsHtml()}</select>
+        </div>
+        <div class="field" style="grid-column:span 1;">
+          <label>품목 (메모처럼 자유 작성)</label>
+          <textarea id="f_item" rows="1" placeholder="예) 감자 20kg, 대파 5단..."></textarea>
+        </div>
+        <div class="field">
+          <label>발주방법 (메모처럼 자유 작성)</label>
+          <textarea id="f_method" rows="1" placeholder="예) 전화주문 / 카톡채널 / 앱주문..."></textarea>
+        </div>
+        <div class="field-submit">
+          <button type="submit" class="btn-accent">저장</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- 리스트 -->
+    <div class="panel">
+      <div class="list-controls">
+        <div class="search-box">
+          <input type="text" placeholder="거래처 / 품목 / 발주방법 / 발주자 검색" value="${escapeHtml(searchByBiz[biz])}" oninput="onSearchInput('${biz}', this.value)">
+        </div>
+        <div class="sort-group">
+          <button class="${sortKeyByBiz[biz]==='payment'?'active':''}" onclick="onSortClick('${biz}','payment')">결제순</button>
+          <button class="${sortKeyByBiz[biz]==='vendor'?'active':''}" onclick="onSortClick('${biz}','vendor')">거래처순</button>
+          <button class="${sortKeyByBiz[biz]==='orderer'?'active':''}" onclick="onSortClick('${biz}','orderer')">발주자순</button>
+        </div>
+        <button class="btn-ghost btn-sm" onclick="downloadExcel('${biz}')">엑셀 다운로드</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="order-table">
+          <thead><tr>
+            <th style="width:90px;">결제</th>
+            <th style="width:150px;">거래처</th>
+            <th>품목</th>
+            <th>발주방법</th>
+            <th style="width:100px;">발주자</th>
+            <th style="width:120px;">관리</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('orderForm').addEventListener('submit', (e)=> submitNewOrder(e, biz));
+}
+
+function onSearchInput(biz, value){
+  searchByBiz[biz] = value;
+  renderBusinessTab(biz);
+  // 검색어 입력 중 포커스가 날아가지 않도록 커서를 유지
+  const input = document.querySelector('.search-box input');
+  if(input){ input.focus(); input.selectionStart = input.selectionEnd = input.value.length; }
+}
+function onSortClick(biz, key){
+  sortKeyByBiz[biz] = key;
+  renderBusinessTab(biz);
+}
+
+async function submitNewOrder(e, biz){
+  e.preventDefault();
+  const payment = document.getElementById('f_payment').value;
+  const vendor = document.getElementById('f_vendor').value.trim();
+  const orderer = document.getElementById('f_orderer').value;
+  const item = document.getElementById('f_item').value.trim();
+  const method = document.getElementById('f_method').value.trim();
+  if(!vendor){ toast('거래처명을 입력해주세요.'); return; }
+  try{
+    await db.collection(COL_ORDERS).add({
+      business: biz, payment, vendor, orderer, item, method,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdBy: currentUser.username,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: currentUser.username
+    });
+    addLog('발주 등록', `[${biz}] ${vendor}`);
+    toast('저장되었습니다.');
+  }catch(err){
+    console.error(err);
+    toast('저장 중 오류가 발생했습니다.');
+  }
+}
+
+/* ==================================================================================
+   [8] 수정 모달
+================================================================================== */
+function openEditModal(orderId){
+  const o = orders.find(x=>x.id===orderId);
+  if(!o) return;
+  editingOrderId = orderId;
+  document.getElementById('editModalSub').textContent = `${o.business} · 마지막 수정 ${fmtDate(o.updatedAt)} (${o.updatedBy||'-'})`;
+  document.getElementById('editPayment').value = o.payment || '즉시결제';
+  document.getElementById('editVendor').value = o.vendor || '';
+  document.getElementById('editItem').value = o.item || '';
+  document.getElementById('editMethod').value = o.method || '';
+  document.getElementById('editOrderer').innerHTML = ordererOptionsHtml(o.orderer);
+  document.getElementById('editOverlay').classList.add('show');
+}
+function closeEditModal(){
+  document.getElementById('editOverlay').classList.remove('show');
+  editingOrderId = null;
+}
+document.getElementById('editCancelBtn').addEventListener('click', closeEditModal);
+
+document.getElementById('editSaveBtn').addEventListener('click', ()=>{
+  // 사용자가 저장을 눌러도 바로 반영하지 않고, 화면 정중앙 확인창을 한번 더 띄웁니다.
+  showConfirm('수정하시겠습니까?', commitEdit);
+});
+
+async function commitEdit(){
+  if(!editingOrderId) return;
+  const payload = {
+    payment: document.getElementById('editPayment').value,
+    vendor: document.getElementById('editVendor').value.trim(),
+    item: document.getElementById('editItem').value.trim(),
+    method: document.getElementById('editMethod').value.trim(),
+    orderer: document.getElementById('editOrderer').value,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedBy: currentUser.username
+  };
+  try{
+    await db.collection(COL_ORDERS).doc(editingOrderId).update(payload);
+    addLog('발주 수정', `${payload.vendor}`);
+    toast('수정이 완료되었습니다.');
+  }catch(err){
+    console.error(err);
+    toast('수정 중 오류가 발생했습니다.');
+  }
+  closeEditModal();
+}
+
+function confirmDeleteOrder(orderId){
+  const o = orders.find(x=>x.id===orderId);
+  showConfirm(`'${o ? o.vendor : ''}' 발주 내용을 삭제하시겠습니까?`, async ()=>{
+    try{
+      await db.collection(COL_ORDERS).doc(orderId).delete();
+      addLog('발주 삭제', `${o ? o.vendor : orderId}`);
+      toast('삭제되었습니다.');
+    }catch(err){ console.error(err); toast('삭제 중 오류가 발생했습니다.'); }
+  });
+}
+
+/* ==================================================================================
+   [9] 공용 확인 모달
+================================================================================== */
+function showConfirm(message, onYes){
+  document.getElementById('confirmMessage').textContent = message;
+  confirmCallback = onYes;
+  document.getElementById('confirmOverlay').classList.add('show');
+}
+document.getElementById('confirmNoBtn').addEventListener('click', ()=>{
+  document.getElementById('confirmOverlay').classList.remove('show');
+  confirmCallback = null;
+});
+document.getElementById('confirmYesBtn').addEventListener('click', ()=>{
+  document.getElementById('confirmOverlay').classList.remove('show');
+  const cb = confirmCallback; confirmCallback = null;
+  if(cb) cb();
+});
+
+/* ==================================================================================
+   [10] 요약 탭 : 사업장별로 결제 / 거래처 / 발주자만 한눈에 표시
+================================================================================== */
+function renderSummaryTab(){
+  const blocks = BUSINESSES.map(biz=>{
+    const list = sortOrders(ordersOf(biz), 'payment');
+    const rows = list.length ? list.map(o=>`
+      <tr>
+        <td><span class="payment-badge ${o.payment==='즉시결제'?'immediate':'monthly'}">${escapeHtml(o.payment||'-')}</span></td>
+        <td>${escapeHtml(o.vendor||'-')}</td>
+        <td>${escapeHtml(o.orderer||'-')}</td>
+      </tr>`).join('') : `<tr class="empty-row"><td colspan="3">데이터 없음</td></tr>`;
+    return `
+      <div class="panel">
+        <h2>${escapeHtml(biz)}</h2>
+        <table class="order-table">
+          <thead><tr><th style="width:80px;">결제</th><th>거래처</th><th style="width:80px;">발주자</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).join('');
+  document.getElementById('tabContent').innerHTML = `<div class="summary-grid">${blocks}</div>`;
+}
+
+/* ==================================================================================
+   [11] 설정 탭 (관리자 전용) : 계정관리 / 발주자관리 / 활동로그
+================================================================================== */
+function renderSettingsTab(){
+  if(currentUser.role !== 'admin'){
+    document.getElementById('tabContent').innerHTML = `<div class="panel"><p class="empty-state">관리자만 접근할 수 있는 화면입니다.</p></div>`;
+    return;
+  }
+  const accountRows = accounts.length ? accounts.map(a=>`
+    <div class="chip-row">
+      <span>${escapeHtml(a.username)} <span style="color:var(--ink-soft); font-size:11.5px;">(${a.role==='admin'?'관리자':'일반'})</span></span>
+      <button class="btn-danger btn-sm" onclick="confirmDeleteAccount('${a.id}','${escapeHtml(a.username)}')">삭제</button>
+    </div>`).join('') : `<p class="empty-state">등록된 계정이 없습니다.</p>`;
+
+  const ordererRows = orderers.length ? orderers.map(o=>`
+    <div class="chip-row">
+      <span>${escapeHtml(o.name)}</span>
+      <button class="btn-danger btn-sm" onclick="confirmDeleteOrderer('${o.id}','${escapeHtml(o.name)}')">삭제</button>
+    </div>`).join('') : `<p class="empty-state">등록된 발주자가 없습니다.</p>`;
+
+  const logRows = logs.length ? logs.map(l=>`
+    <div class="log-row"><span class="log-time">${fmtDate(l.timestamp)}</span><b>${escapeHtml(l.username)}</b>(${l.role==='admin'?'관리자':'일반'}) · ${escapeHtml(l.action)} ${l.detail?('- '+escapeHtml(l.detail)):''}</div>
+  `).join('') : `<p class="empty-state">기록된 로그가 없습니다.</p>`;
+
+  document.getElementById('tabContent').innerHTML = `
+    <div class="settings-grid">
+      <div class="panel">
+        <h2>계정 관리</h2>
+        <h3>새 계정 추가</h3>
+        <form class="mini-form" id="accountForm">
+          <input id="acc_id" type="text" placeholder="아이디" required>
+          <input id="acc_pw" type="text" placeholder="비밀번호" required>
+          <select id="acc_role">
+            <option value="user">일반</option>
+            <option value="admin">관리자</option>
+          </select>
+          <button type="submit" class="btn-accent btn-sm">추가</button>
+        </form>
+        <div class="chip-list">${accountRows}</div>
+      </div>
+
+      <div class="panel">
+        <h2>발주자 관리</h2>
+        <h3>발주자 등록</h3>
+        <form class="mini-form" id="ordererForm">
+          <input id="ord_name" type="text" placeholder="발주자 이름" required>
+          <button type="submit" class="btn-accent btn-sm">추가</button>
+        </form>
+        <div class="chip-list">${ordererRows}</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>활동 로그</h2>
+      <div class="log-list">${logRows}</div>
+    </div>
+  `;
+
+  document.getElementById('accountForm').addEventListener('submit', submitNewAccount);
+  document.getElementById('ordererForm').addEventListener('submit', submitNewOrderer);
+}
+
+async function submitNewAccount(e){
+  e.preventDefault();
+  const username = document.getElementById('acc_id').value.trim();
+  const password = document.getElementById('acc_pw').value;
+  const role = document.getElementById('acc_role').value;
+  if(!username || !password){ toast('아이디와 비밀번호를 입력해주세요.'); return; }
+  if(accounts.some(a=>a.username === username)){ toast('이미 존재하는 아이디입니다.'); return; }
+  try{
+    await db.collection(COL_ACCOUNTS).add({
+      username, password, role, createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    addLog('계정 추가', `${username} (${role==='admin'?'관리자':'일반'})`);
+    toast('계정이 추가되었습니다.');
+    e.target.reset();
+  }catch(err){ console.error(err); toast('계정 추가 중 오류가 발생했습니다.'); }
+}
+
+function confirmDeleteAccount(accId, username){
+  const admins = accounts.filter(a=>a.role==='admin');
+  const target = accounts.find(a=>a.id===accId);
+  if(target && target.role==='admin' && admins.length <= 1){
+    toast('최소 1명의 관리자 계정은 유지되어야 합니다.');
+    return;
+  }
+  showConfirm(`'${username}' 계정을 삭제하시겠습니까?`, async ()=>{
+    try{
+      await db.collection(COL_ACCOUNTS).doc(accId).delete();
+      addLog('계정 삭제', username);
+      toast('계정이 삭제되었습니다.');
+    }catch(err){ console.error(err); toast('삭제 중 오류가 발생했습니다.'); }
+  });
+}
+
+async function submitNewOrderer(e){
+  e.preventDefault();
+  const name = document.getElementById('ord_name').value.trim();
+  if(!name) return;
+  if(orderers.some(o=>o.name === name)){ toast('이미 등록된 발주자입니다.'); return; }
+  try{
+    await db.collection(COL_ORDERERS).add({ name, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    addLog('발주자 등록', name);
+    toast('발주자가 등록되었습니다.');
+    e.target.reset();
+  }catch(err){ console.error(err); toast('등록 중 오류가 발생했습니다.'); }
+}
+function confirmDeleteOrderer(id, name){
+  showConfirm(`발주자 '${name}'을(를) 삭제하시겠습니까?`, async ()=>{
+    try{
+      await db.collection(COL_ORDERERS).doc(id).delete();
+      addLog('발주자 삭제', name);
+      toast('삭제되었습니다.');
+    }catch(err){ console.error(err); toast('삭제 중 오류가 발생했습니다.'); }
+  });
+}
+
+/* ==================================================================================
+   [12] 엑셀 다운로드 (현재 화면에 보이는 정렬/검색 결과 기준)
+================================================================================== */
+function downloadExcel(biz){
+  const list = sortOrders(filterOrders(ordersOf(biz), searchByBiz[biz]), sortKeyByBiz[biz]);
+  const rows = list.map(o=>({
+    '결제': o.payment || '', '거래처': o.vendor || '', '품목': o.item || '',
+    '발주방법': o.method || '', '발주자': o.orderer || '',
+    '최근수정': fmtDate(o.updatedAt), '수정자': o.updatedBy || ''
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, biz);
+  const today = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `${biz}_발주리스트_${today}.xlsx`);
+  addLog('엑셀 다운로드', biz);
+}
+
+/* ==================================================================================
+   [13] 시작
+================================================================================== */
+tryRestoreSession();
+</script>
+</body>
+</html>
