@@ -171,6 +171,12 @@
   .payment-badge{font-size:11.5px; font-weight:700; padding:3px 9px; border-radius:20px; display:inline-block; white-space:nowrap;}
   .payment-badge.immediate{background:var(--accent-soft); color:var(--accent);}
   .payment-badge.monthly{background:#fff3e0; color:#b5691a;}
+  .biz-badge{font-size:11.5px; font-weight:700; padding:3px 9px; border-radius:20px; display:inline-block; white-space:nowrap;}
+  .biz-badge.biz-market{background:#FFF3D6; color:#9A6B00;}
+  .biz-badge.biz-epida{background:#E3F2FD; color:#1565C0;}
+  .biz-badge.biz-bojagi{background:#E8F5E9; color:#2E7D32;}
+  .vendor-group-cell{font-weight:700; vertical-align:middle !important; border-left:3px solid var(--accent);}
+  table.order-table tr.group-start td{border-top:2px solid var(--line-strong);}
   .memo-preview{cursor:pointer; color:var(--ink); display:block;}
   .memo-preview:hover{color:var(--accent); text-decoration:underline;}
   .memo-preview.empty{color:#b6b6b6; font-style:italic;}
@@ -829,11 +835,16 @@ document.getElementById('confirmYesBtn').addEventListener('click', ()=>{
 function renderSummaryTab(){
   const filtered = filterOrders(orders, summarySearch);
   const sorted = sortOrders(filtered, summarySortKey);
+  const grouping = summarySortKey === 'vendor'; // 거래처순일 때만 같은 거래처를 묶어서 표시
 
-  const rowsHtml = sorted.length ? sorted.map(o => `
-    <tr onclick="openEditModal('${o.id}')">
+  const bizClass = { '꽃밥마켓':'biz-market', '꽃밥에피다':'biz-epida', '보자기꽃밥':'biz-bojagi' };
+
+  function bizBadge(biz){
+    return `<span class="biz-badge ${bizClass[biz]||''}">${escapeHtml(biz||'-')}</span>`;
+  }
+  function restOfRow(o){
+    return `
       <td><span class="payment-badge ${o.payment==='즉시결제'?'immediate':'monthly'}">${escapeHtml(o.payment||'-')}</span></td>
-      <td>${escapeHtml(o.vendor||'-')}</td>
       <td>
         <span class="memo-preview ${o.item?'':'empty'}">
           ${o.item ? escapeHtml(truncate(o.item,60)) : '내용 없음'}
@@ -845,13 +856,40 @@ function renderSummaryTab(){
         </span>
       </td>
       <td>${escapeHtml(o.orderer||'-')}</td>
-      <td>${escapeHtml(o.business||'-')}</td>
+      <td>${bizBadge(o.business)}</td>
       <td class="row-actions">
         <button class="btn-ghost btn-sm btn-icon" title="수정" onclick="event.stopPropagation(); openEditModal('${o.id}')">✏️</button>
         <button class="btn-danger btn-sm btn-icon" title="삭제" onclick="event.stopPropagation(); confirmDeleteOrder('${o.id}')">✕</button>
-      </td>
-    </tr>
-  `).join('') : `<tr class="empty-row"><td colspan="7">등록된 발주처가 없습니다.</td></tr>`;
+      </td>`;
+  }
+
+  let rowsHtml = '';
+  if(!sorted.length){
+    rowsHtml = `<tr class="empty-row"><td colspan="7">등록된 발주처가 없습니다.</td></tr>`;
+  } else if(grouping){
+    // 거래처순일 때 : 연속으로 같은 거래처가 나오면 거래처 칸을 하나로 병합해서 표시 (사진처럼 반복돼서 헷갈리는 것을 방지)
+    let i = 0;
+    while(i < sorted.length){
+      let j = i;
+      while(j < sorted.length && sorted[j].vendor === sorted[i].vendor) j++;
+      const groupSize = j - i;
+      for(let k = i; k < j; k++){
+        const o = sorted[k];
+        rowsHtml += `<tr class="${k===i?'group-start':''}" onclick="openEditModal('${o.id}')">`;
+        if(k === i){
+          rowsHtml += `<td class="vendor-group-cell" rowspan="${groupSize}">${escapeHtml(o.vendor||'-')}</td>`;
+        }
+        rowsHtml += restOfRow(o) + `</tr>`;
+      }
+      i = j;
+    }
+  } else {
+    rowsHtml = sorted.map(o => `
+      <tr onclick="openEditModal('${o.id}')">
+        <td>${escapeHtml(o.vendor||'-')}</td>
+        ${restOfRow(o)}
+      </tr>`).join('');
+  }
 
   document.getElementById('tabContent').innerHTML = `
     <div class="panel">
@@ -872,7 +910,7 @@ function renderSummaryTab(){
         </div>
         <div class="sort-group">
           <button class="${summarySortKey==='payment'?'active':''}" onclick="onSummarySortClick('payment')">결제순</button>
-          <button class="${summarySortKey==='vendor'?'active':''}" onclick="onSummarySortClick('vendor')">거래처순</button>
+          <button class="${summarySortKey==='vendor'?'active':''}" onclick="onSummarySortClick('vendor')">거래처순(묶어보기)</button>
           <button class="${summarySortKey==='orderer'?'active':''}" onclick="onSummarySortClick('orderer')">발주자순</button>
           <button class="${summarySortKey==='business'?'active':''}" onclick="onSummarySortClick('business')">사업장순</button>
         </div>
@@ -881,12 +919,12 @@ function renderSummaryTab(){
       <div style="overflow-x:auto;">
         <table class="order-table list-table">
           <colgroup>
-            <col style="width:7%"><col style="width:12%"><col style="width:33%">
-            <col style="width:9%"><col style="width:9%"><col style="width:10%"><col style="width:10%">
+            <col style="width:14%"><col style="width:7%"><col style="width:33%">
+            <col style="width:9%"><col style="width:9%"><col style="width:14%"><col style="width:14%">
           </colgroup>
           <thead><tr>
-            <th>결제</th>
             <th>거래처</th>
+            <th>결제</th>
             <th>품목</th>
             <th>발주방법</th>
             <th>발주자</th>
@@ -1170,14 +1208,14 @@ async function downloadExcel(biz){
   addLog('엑셀 다운로드', biz);
 }
 
-// 요약 탭 : 전체 사업장 통합, 사업장별 리스트와 동일한 열 구성 + 맨 오른쪽에 사업장 열 (현재 검색/정렬 상태 기준)
+// 요약 탭 : 전체 사업장 통합, 화면과 동일한 열 순서(거래처 우선) + 사업장 열 (현재 검색/정렬 상태 기준)
 async function downloadSummaryExcel(){
   const list = sortOrders(filterOrders(orders, summarySearch), summarySortKey);
   const wb = new ExcelJS.Workbook();
   buildStyledSheet(
     wb, '꽃밥이야기',
-    ['결제','거래처','품목','발주방법','발주자','사업장'],
-    list.map(o => [o.payment, o.vendor, o.item, o.method, o.orderer, o.business])
+    ['거래처','결제','품목','발주방법','발주자','사업장'],
+    list.map(o => [o.vendor, o.payment, o.item, o.method, o.orderer, o.business])
   );
   await triggerXlsxDownload(wb, `꽃밥이야기_요약_${todayStr()}.xlsx`);
   addLog('요약 엑셀 다운로드', '전체 사업장');
