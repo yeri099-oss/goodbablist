@@ -147,15 +147,16 @@
   @media (max-width:900px){ .order-form{grid-template-columns:repeat(2,1fr);} }
   @media (max-width:560px){ .order-form{grid-template-columns:1fr;} }
 
-  /* 발주자 다중 선택 (알약 모양 토글 버튼) */
+  /* 발주자 다중 선택 : 결제 드롭다운처럼 위에서 아래로 쭉 나열되는 방식 */
   .orderer-picker{
-    display:flex; flex-wrap:wrap; gap:6px; padding:8px;
+    display:flex; flex-direction:column; gap:4px; padding:8px;
     border:1px solid var(--line-strong); border-radius:8px; background:#fff;
-    max-height:120px; overflow-y:auto;
+    max-height:160px; overflow-y:auto;
   }
   .orderer-pill{
-    padding:5px 12px; border-radius:20px; border:1px solid var(--line-strong);
-    background:#fff; color:var(--ink-soft); font-size:12.5px; font-weight:600; cursor:pointer;
+    display:block; width:100%; text-align:left; box-sizing:border-box;
+    padding:7px 10px; border-radius:6px; border:1px solid var(--line-strong);
+    background:#fff; color:var(--ink-soft); font-size:13px; font-weight:600; cursor:pointer;
   }
   .orderer-pill:hover{border-color:var(--accent);}
   .orderer-pill.selected{background:var(--accent); border-color:var(--accent); color:#fff;}
@@ -193,7 +194,9 @@
       대신 행마다 옅은 배경 + 왼쪽 강조선을 넣는 방식으로 안정적으로 구현) */
   tr.vendor-grouped td{background:#F5F8FF;}
   tr.vendor-grouped:hover td{background:#eaf0ff;}
-  tr.vendor-grouped td:first-child{border-left:3px solid var(--accent);}
+  /* border-left 대신 box-shadow 사용: border-collapse 표에서 border-left와 아래쪽 구분선이
+     만나는 지점에 미세한 어긋남이 생기는 문제가 있어, 충돌 없는 box-shadow로 강조선을 그립니다 */
+  tr.vendor-grouped td:first-child{box-shadow: inset 3px 0 0 0 var(--accent);}
   .memo-preview{cursor:pointer; color:var(--ink); display:block;}
   .memo-preview:hover{color:var(--accent); text-decoration:underline;}
   .memo-preview.empty{color:#b6b6b6; font-style:italic;}
@@ -346,7 +349,7 @@
       <textarea id="editMethod" rows="4"></textarea>
     </div>
     <div class="field">
-      <label>발주자 (여러 명 선택 가능)</label>
+      <label>발주자</label>
       <div class="orderer-picker" id="editOrdererPicker"></div>
     </div>
     <div class="modal-actions">
@@ -692,7 +695,7 @@ function renderBusinessTab(biz){
           </datalist>
         </div>
         <div class="field">
-          <label>발주자 (여러 명 선택 가능)</label>
+          <label>발주자</label>
           <div class="orderer-picker" id="f_orderer_picker">${ordererPickerHtml([])}</div>
         </div>
         <div class="field" style="grid-column:span 1;">
