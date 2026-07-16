@@ -175,8 +175,12 @@
   .biz-badge.biz-market{background:#FFF3D6; color:#9A6B00;}
   .biz-badge.biz-epida{background:#E3F2FD; color:#1565C0;}
   .biz-badge.biz-bojagi{background:#E8F5E9; color:#2E7D32;}
-  .vendor-group-cell{font-weight:700; vertical-align:middle !important; border-left:3px solid var(--accent);}
-  table.order-table tr.group-start td{border-top:2px solid var(--line-strong);}
+  /* 요약탭에서 같은 거래처가 2행 이상 연속될 때 표시하는 그룹 스타일.
+     (참고: 셀 병합(rowspan) 방식은 텍스트 줄바꿈으로 행 높이가 달라지면 선이 삐뚤어지는 문제가 있어
+      대신 행마다 옅은 배경 + 왼쪽 강조선을 넣는 방식으로 안정적으로 구현) */
+  tr.vendor-grouped td{background:#F5F8FF;}
+  tr.vendor-grouped:hover td{background:#eaf0ff;}
+  tr.vendor-grouped td:first-child{border-left:3px solid var(--accent);}
   .memo-preview{cursor:pointer; color:var(--ink); display:block;}
   .memo-preview:hover{color:var(--accent); text-decoration:underline;}
   .memo-preview.empty{color:#b6b6b6; font-style:italic;}
@@ -867,8 +871,8 @@ function renderSummaryTab(){
   if(!sorted.length){
     rowsHtml = `<tr class="empty-row"><td colspan="7">등록된 발주처가 없습니다.</td></tr>`;
   } else if(grouping){
-    // 거래처순일 때 : 같은 거래처가 실제로 2행 이상 연속될 때만 거래처 칸을 병합하고 파란줄 표시.
-    // 혼자 나오는(연속되지 않는) 거래처는 다른 정렬과 똑같이 평범한 한 줄로 보여줍니다.
+    // 거래처순일 때 : 같은 거래처가 실제로 2행 이상 연속될 때만 옅은 배경+왼쪽 강조선으로 그룹임을 표시.
+    // (칸 병합 대신 행 스타일로 표시해서, 내용 줄바꿈으로 행 높이가 달라져도 선이 삐뚤어지지 않습니다)
     let i = 0;
     while(i < sorted.length){
       let j = i;
@@ -876,12 +880,11 @@ function renderSummaryTab(){
       const groupSize = j - i;
       for(let k = i; k < j; k++){
         const o = sorted[k];
-        rowsHtml += `<tr class="${k===i && groupSize>1 ? 'group-start':''}" onclick="openEditModal('${o.id}')">`;
-        if(k === i){
-          const cellClass = groupSize > 1 ? 'vendor-group-cell' : '';
-          rowsHtml += `<td class="${cellClass}" rowspan="${groupSize}">${escapeHtml(o.vendor||'-')}</td>`;
-        }
-        rowsHtml += restOfRow(o) + `</tr>`;
+        const rowClass = groupSize > 1 ? 'vendor-grouped' : '';
+        rowsHtml += `<tr class="${rowClass}" onclick="openEditModal('${o.id}')">
+          <td>${escapeHtml(o.vendor||'-')}</td>
+          ${restOfRow(o)}
+        </tr>`;
       }
       i = j;
     }
