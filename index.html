@@ -867,7 +867,8 @@ function renderSummaryTab(){
   if(!sorted.length){
     rowsHtml = `<tr class="empty-row"><td colspan="7">등록된 발주처가 없습니다.</td></tr>`;
   } else if(grouping){
-    // 거래처순일 때 : 연속으로 같은 거래처가 나오면 거래처 칸을 하나로 병합해서 표시 (사진처럼 반복돼서 헷갈리는 것을 방지)
+    // 거래처순일 때 : 같은 거래처가 실제로 2행 이상 연속될 때만 거래처 칸을 병합하고 파란줄 표시.
+    // 혼자 나오는(연속되지 않는) 거래처는 다른 정렬과 똑같이 평범한 한 줄로 보여줍니다.
     let i = 0;
     while(i < sorted.length){
       let j = i;
@@ -875,9 +876,10 @@ function renderSummaryTab(){
       const groupSize = j - i;
       for(let k = i; k < j; k++){
         const o = sorted[k];
-        rowsHtml += `<tr class="${k===i?'group-start':''}" onclick="openEditModal('${o.id}')">`;
+        rowsHtml += `<tr class="${k===i && groupSize>1 ? 'group-start':''}" onclick="openEditModal('${o.id}')">`;
         if(k === i){
-          rowsHtml += `<td class="vendor-group-cell" rowspan="${groupSize}">${escapeHtml(o.vendor||'-')}</td>`;
+          const cellClass = groupSize > 1 ? 'vendor-group-cell' : '';
+          rowsHtml += `<td class="${cellClass}" rowspan="${groupSize}">${escapeHtml(o.vendor||'-')}</td>`;
         }
         rowsHtml += restOfRow(o) + `</tr>`;
       }
@@ -910,7 +912,7 @@ function renderSummaryTab(){
         </div>
         <div class="sort-group">
           <button class="${summarySortKey==='payment'?'active':''}" onclick="onSummarySortClick('payment')">결제순</button>
-          <button class="${summarySortKey==='vendor'?'active':''}" onclick="onSummarySortClick('vendor')">거래처순(묶어보기)</button>
+          <button class="${summarySortKey==='vendor'?'active':''}" onclick="onSummarySortClick('vendor')">거래처순</button>
           <button class="${summarySortKey==='orderer'?'active':''}" onclick="onSummarySortClick('orderer')">발주자순</button>
           <button class="${summarySortKey==='business'?'active':''}" onclick="onSummarySortClick('business')">사업장순</button>
         </div>
