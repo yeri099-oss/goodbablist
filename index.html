@@ -83,7 +83,13 @@
   .btn-ghost:hover{background:#f2f2f2;}
   .btn-danger{background:var(--danger-soft); color:var(--danger);}
   .btn-danger:hover{background:#fbdde1;}
+  .btn-success{background:var(--ok); color:#fff;}
+  .btn-success:hover{background:#186f3d;}
   .btn-sm{padding:6px 11px; font-size:12.5px; border-radius:6px;}
+  .btn-icon{
+    width:30px; height:30px; padding:0; border-radius:6px; font-size:14px;
+    display:inline-flex; align-items:center; justify-content:center;
+  }
 
   /* ---------- 로그인 화면 ---------- */
   #loginScreen{
@@ -146,7 +152,8 @@
   .search-box{display:flex; gap:8px; flex:1; min-width:280px; flex-wrap:wrap;}
   .search-box select{width:110px; flex:none;}
   .search-box input{flex:1; min-width:140px;}
-  .search-box .search-reset{color:var(--ink-soft);}
+  .search-box .search-reset{background:var(--ok); color:#fff; border:none;}
+  .search-box .search-reset:hover{background:#186f3d;}
   .sort-group{display:flex; gap:6px; background:#f1f1f1; padding:4px; border-radius:8px;}
   .sort-group button{background:transparent; color:var(--ink-soft); padding:6px 12px; font-size:12.5px; border-radius:6px;}
   .sort-group button.active{background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.12);}
@@ -321,8 +328,8 @@
     <div class="confirm-icon">!</div>
     <h3 id="confirmMessage">진행하시겠습니까?</h3>
     <div class="modal-actions">
-      <button class="btn-ghost" id="confirmNoBtn">아니오</button>
       <button class="btn-accent" id="confirmYesBtn">예</button>
+      <button class="btn-ghost" id="confirmNoBtn">아니오</button>
     </div>
   </div>
 </div>
@@ -373,6 +380,7 @@ BUSINESSES.forEach(b => { sortKeyByBiz[b] = 'payment'; searchByBiz[b] = {type:'v
 let confirmCallback = null;       // 확인 모달에서 "예"를 눌렀을 때 실행할 함수
 let editingOrderId = null;        // 현재 수정 모달에서 편집 중인 발주 문서 id
 let dragOrdererId = null;         // 발주자 드래그 정렬 시 현재 드래그 중인 문서 id
+let summarySortKey = 'payment';   // 요약탭(전체 사업장 통합) 정렬 기준
 
 /* ==================================================================================
    [3] 유틸 함수
@@ -577,18 +585,18 @@ function renderBusinessTab(biz){
       <td>${escapeHtml(o.vendor||'-')}</td>
       <td>
         <span class="memo-preview ${o.item?'':'empty'}" onclick="openEditModal('${o.id}')">
-          ${o.item ? escapeHtml(truncate(o.item,60)) : '내용 없음 (클릭하여 작성)'}
+          ${o.item ? escapeHtml(truncate(o.item,60)) : '내용 없음'}
         </span>
       </td>
       <td>
         <span class="memo-preview ${o.method?'':'empty'}" onclick="openEditModal('${o.id}')">
-          ${o.method ? escapeHtml(truncate(o.method,40)) : '내용 없음 (클릭하여 작성)'}
+          ${o.method ? escapeHtml(truncate(o.method,4)) : '내용 없음'}
         </span>
       </td>
       <td>${escapeHtml(o.orderer||'-')}</td>
       <td class="row-actions">
-        <button class="btn-ghost btn-sm" onclick="openEditModal('${o.id}')">수정</button>
-        <button class="btn-danger btn-sm" onclick="confirmDeleteOrder('${o.id}')">삭제</button>
+        <button class="btn-ghost btn-sm btn-icon" title="수정" onclick="openEditModal('${o.id}')">✏️</button>
+        <button class="btn-danger btn-sm btn-icon" title="삭제" onclick="confirmDeleteOrder('${o.id}')">✕</button>
       </td>
     </tr>
   `).join('') : `<tr class="empty-row"><td colspan="6">등록된 발주처가 없습니다. 위 입력폼에서 추가해보세요.</td></tr>`;
@@ -655,8 +663,8 @@ function renderBusinessTab(biz){
       <div style="overflow-x:auto;">
         <table class="order-table list-table">
           <colgroup>
-            <col style="width:9%"><col style="width:14%"><col style="width:37%">
-            <col style="width:22%"><col style="width:10%"><col style="width:8%">
+            <col style="width:8%"><col style="width:14%"><col style="width:46%">
+            <col style="width:10%"><col style="width:12%"><col style="width:10%">
           </colgroup>
           <thead><tr>
             <th>결제</th>
@@ -687,8 +695,7 @@ function onSearchClear(biz){
 }
 function onSortClick(biz, key){
   sortKeyByBiz[biz] = key;
-  // 현재 열려있는 탭이 요약탭인지 사업장탭인지에 따라 알맞게 다시 그립니다.
-  if(activeTab === '요약') renderSummaryTab(); else renderBusinessTab(biz);
+  renderBusinessTab(biz);
 }
 
 async function submitNewOrder(e, biz){
@@ -796,35 +803,38 @@ document.getElementById('confirmYesBtn').addEventListener('click', ()=>{
    [10] 요약 탭 : 사업장별로 결제 / 거래처 / 발주자만 한눈에 표시
 ================================================================================== */
 function renderSummaryTab(){
-  const blocks = BUSINESSES.map(biz=>{
-    const key = sortKeyByBiz[biz];
-    const list = sortOrders(ordersOf(biz), key);
-    const rows = list.length ? list.map(o=>`
-      <tr>
-        <td><span class="payment-badge ${o.payment==='즉시결제'?'immediate':'monthly'}">${escapeHtml(o.payment||'-')}</span></td>
-        <td>${escapeHtml(o.vendor||'-')}</td>
-        <td>${escapeHtml(o.orderer||'-')}</td>
-      </tr>`).join('') : `<tr class="empty-row"><td colspan="3">데이터 없음</td></tr>`;
-    return `
-      <div class="panel">
-        <div class="summary-panel-head">
-          <h2>${escapeHtml(biz)}</h2>
-          <div class="summary-panel-controls">
-            <div class="sort-group">
-              <button class="${key==='payment'?'active':''}" onclick="onSortClick('${biz}','payment')">결제순</button>
-              <button class="${key==='vendor'?'active':''}" onclick="onSortClick('${biz}','vendor')">거래처순</button>
-              <button class="${key==='orderer'?'active':''}" onclick="onSortClick('${biz}','orderer')">발주자순</button>
-            </div>
-            <button class="btn-ghost btn-sm" onclick="downloadSummaryExcel('${biz}')">엑셀 다운로드</button>
+  const list = sortOrders(orders, summarySortKey);
+  const rows = list.length ? list.map(o=>`
+    <tr>
+      <td><span class="payment-badge ${o.payment==='즉시결제'?'immediate':'monthly'}">${escapeHtml(o.payment||'-')}</span></td>
+      <td>${escapeHtml(o.vendor||'-')}</td>
+      <td>${escapeHtml(o.orderer||'-')}</td>
+      <td>${escapeHtml(o.business||'-')}</td>
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="4">데이터 없음</td></tr>`;
+
+  document.getElementById('tabContent').innerHTML = `
+    <div class="panel">
+      <div class="summary-panel-head">
+        <h2>꽃밥이야기</h2>
+        <div class="summary-panel-controls">
+          <div class="sort-group">
+            <button class="${summarySortKey==='payment'?'active':''}" onclick="onSummarySortClick('payment')">결제순</button>
+            <button class="${summarySortKey==='vendor'?'active':''}" onclick="onSummarySortClick('vendor')">거래처순</button>
+            <button class="${summarySortKey==='orderer'?'active':''}" onclick="onSummarySortClick('orderer')">발주자순</button>
           </div>
+          <button class="btn-ghost btn-sm" onclick="downloadSummaryExcel()">엑셀 다운로드</button>
         </div>
-        <table class="order-table summary-table">
-          <thead><tr><th>결제</th><th>거래처</th><th>발주자</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-  }).join('');
-  document.getElementById('tabContent').innerHTML = `<div class="summary-grid">${blocks}</div>`;
+      </div>
+      <table class="order-table summary-table">
+        <thead><tr><th>결제</th><th>거래처</th><th>발주자</th><th>사업장</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+function onSummarySortClick(key){
+  summarySortKey = key;
+  renderSummaryTab();
 }
 
 /* ==================================================================================
@@ -987,32 +997,51 @@ async function ordererDrop(e, targetId){
 
 /* ==================================================================================
    [12] 엑셀 다운로드
-   대표님이 보내주신 양식(제목 병합 행 + 굵은 헤더 + 지정된 열 너비)을 그대로 재현합니다.
-   무료 라이브러리 중 서식(굵게/병합/정렬/열너비)까지 지원하는 ExcelJS를 사용합니다.
+   대표님이 보내주신 양식(제목 병합 행 + 색상 배경 + 굵은 헤더 + 테두리)을 재현하고,
+   열 너비는 고정값이 아니라 실제 글자 길이에 맞춰 자동으로 계산합니다.
 ================================================================================== */
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 
+// 문자열의 "표시 폭"을 계산합니다. 한글 등 폭이 넓은 문자는 2칸으로 계산해서
+// 엑셀 열너비를 글자 길이에 맞게 자동으로 잡을 때 사용합니다.
+function textWidth(str){
+  if(!str) return 0;
+  let w = 0;
+  for(const ch of String(str)){
+    w += /[\u3131-\uD79D\u4E00-\u9FFF]/.test(ch) ? 2 : 1;
+  }
+  return w;
+}
+
 // 시트 하나를 대표님 양식대로 만들어주는 공용 함수
-// headers: 열 제목 배열, colWidths: 각 열 너비, dataRows: 각 행의 값 배열(headers와 같은 순서)
-function buildStyledSheet(workbook, sheetTitle, headers, colWidths, dataRows){
+// headers: 열 제목 배열, dataRows: 각 행의 값 배열(headers와 같은 순서)
+function buildStyledSheet(workbook, sheetTitle, headers, dataRows){
   const ws = workbook.addWorksheet(sheetTitle.slice(0,31)); // 엑셀 시트명은 31자 제한
   const lastCol = String.fromCharCode('B'.charCodeAt(0) + headers.length - 1);
+  const thinBorder = {
+    top:{style:'thin', color:{argb:'FFBFBFBF'}}, bottom:{style:'thin', color:{argb:'FFBFBFBF'}},
+    left:{style:'thin', color:{argb:'FFBFBFBF'}}, right:{style:'thin', color:{argb:'FFBFBFBF'}}
+  };
 
-  // 1행 : 사업장명 제목 (병합 + 굵게 + 가운데정렬)
+  // 1행 : 사업장명 제목 (병합 + 굵게 + 가운데정렬 + 연두색 배경)
   ws.mergeCells(`B1:${lastCol}1`);
   const titleCell = ws.getCell('B1');
   titleCell.value = sheetTitle;
   titleCell.font = { name:'맑은 고딕', bold:true, size:11 };
   titleCell.alignment = { horizontal:'center', vertical:'center' };
+  titleCell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFE2EFDA'} };
+  titleCell.border = thinBorder;
   ws.getRow(1).height = 28.5;
   ws.getRow(2).height = 18; // 2행은 여백용 빈 행
 
-  // 3행 : 헤더 (굵게 + 가운데정렬)
+  // 3행 : 헤더 (굵게 + 가운데정렬 + 회색 배경)
   headers.forEach((h,i)=>{
     const cell = ws.getCell(3, i+2);
     cell.value = h;
     cell.font = { name:'맑은 고딕', bold:true, size:11 };
     cell.alignment = { horizontal:'center', vertical:'center' };
+    cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFF2F2F2'} };
+    cell.border = thinBorder;
   });
   ws.getRow(3).height = 19.5;
 
@@ -1025,11 +1054,20 @@ function buildStyledSheet(workbook, sheetTitle, headers, colWidths, dataRows){
       cell.value = val || '';
       cell.font = { name:'맑은 고딕', size:10 };
       cell.alignment = { horizontal: headers[i]==='품목' ? 'left' : 'center', vertical:'center' };
+      cell.border = thinBorder;
     });
   });
 
+  // 열 너비 : 글자 길이에 맞게 자동 계산 (헤더/데이터 중 가장 긴 값 기준, 너무 길어지지 않게 상한선 적용)
   ws.getColumn(1).width = 2; // A열은 여백
-  colWidths.forEach((w,i)=> ws.getColumn(i+2).width = w);
+  headers.forEach((h,i)=>{
+    let maxW = textWidth(h);
+    dataRows.forEach(row=>{
+      const w = textWidth(row[i]);
+      if(w > maxW) maxW = w;
+    });
+    ws.getColumn(i+2).width = Math.min(Math.max(maxW + 4, 8), 60);
+  });
 }
 
 async function triggerXlsxDownload(workbook, filename){
@@ -1049,25 +1087,23 @@ async function downloadExcel(biz){
   buildStyledSheet(
     wb, biz,
     ['결제','거래처','품목','발주방법','발주자'],
-    [8.66, 12.44, 15.55, 8.66, 6.88],
     list.map(o => [o.payment, o.vendor, o.item, o.method, o.orderer])
   );
   await triggerXlsxDownload(wb, `${biz}_발주리스트_${todayStr()}.xlsx`);
   addLog('엑셀 다운로드', biz);
 }
 
-// 요약 탭 : 결제/거래처/발주자 3개 열 (요약탭에서 선택한 정렬 기준)
-async function downloadSummaryExcel(biz){
-  const list = sortOrders(ordersOf(biz), sortKeyByBiz[biz]);
+// 요약 탭 : 전체 사업장 통합, 결제/거래처/발주자/사업장 4개 열
+async function downloadSummaryExcel(){
+  const list = sortOrders(orders, summarySortKey);
   const wb = new ExcelJS.Workbook();
   buildStyledSheet(
-    wb, biz,
-    ['결제','거래처','발주자'],
-    [10, 18, 10],
-    list.map(o => [o.payment, o.vendor, o.orderer])
+    wb, '꽃밥이야기',
+    ['결제','거래처','발주자','사업장'],
+    list.map(o => [o.payment, o.vendor, o.orderer, o.business])
   );
-  await triggerXlsxDownload(wb, `${biz}_요약_${todayStr()}.xlsx`);
-  addLog('요약 엑셀 다운로드', biz);
+  await triggerXlsxDownload(wb, `꽃밥이야기_요약_${todayStr()}.xlsx`);
+  addLog('요약 엑셀 다운로드', '전체 사업장');
 }
 
 /* ==================================================================================
