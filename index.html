@@ -354,6 +354,10 @@
       <label>발주자</label>
       <div class="orderer-picker" id="editOrdererPicker"></div>
     </div>
+    <div class="field">
+      <label>사업장</label>
+      <select id="editBusiness"></select>
+    </div>
     <div class="modal-actions">
       <button class="btn-ghost" id="editCancelBtn">취소</button>
       <button class="btn-accent" id="editSaveBtn">저장</button>
@@ -833,6 +837,9 @@ function openEditModal(orderId){
   document.getElementById('editItem').value = o.item || '';
   document.getElementById('editMethod').value = o.method || '';
   document.getElementById('editOrdererPicker').innerHTML = ordererPickerHtml(ordererList(o));
+  document.getElementById('editBusiness').innerHTML = BUSINESSES.map(b =>
+    `<option value="${escapeHtml(b)}" ${b===o.business?'selected':''}>${escapeHtml(b)}</option>`
+  ).join('');
   document.getElementById('editOverlay').classList.add('show');
 }
 function closeEditModal(){
@@ -854,6 +861,7 @@ async function commitEdit(){
     item: document.getElementById('editItem').value.trim(),
     method: document.getElementById('editMethod').value.trim(),
     orderer: readSelectedOrderers('editOrdererPicker'),
+    business: document.getElementById('editBusiness').value,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     updatedBy: currentUser.username
   };
