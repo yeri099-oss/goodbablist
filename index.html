@@ -172,9 +172,6 @@
   .search-box input{flex:1; min-width:140px;}
   .search-box .search-reset{background:var(--ok); color:#fff; border:none;}
   .search-box .search-reset:hover{background:#186f3d;}
-  .sort-group{display:flex; gap:6px; background:#f1f1f1; padding:4px; border-radius:8px;}
-  .sort-group button{background:transparent; color:var(--ink-soft); padding:6px 12px; font-size:12.5px; border-radius:6px;}
-  .sort-group button.active{background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.12);}
 
   /* 리스트 테이블 : 사업장탭은 열 너비를 고정해서 품목/발주방법 칸을 넉넉하게 확보 */
   table.order-table{width:100%; border-collapse:collapse; font-size:13.5px;}
@@ -183,6 +180,8 @@
     text-align:left; font-size:11.5px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.3px;
     padding:9px 10px; border-bottom:1px solid var(--line-strong);
   }
+  table.order-table th.sortable-th{cursor:pointer; user-select:none;}
+  table.order-table th.sortable-th:hover{color:var(--ink);}
   table.order-table td{padding:11px 10px; border-bottom:1px solid var(--line); vertical-align:top; word-break:break-word;}
   table.order-table tr:hover td{background:#fafcff;}
   table.order-table.list-table tbody tr{cursor:pointer;}
@@ -303,7 +302,6 @@
       <div class="login-error" id="loginError"></div>
       <button type="submit" class="btn-accent">로그인</button>
     </form>
-    <div class="login-hint">최초 관리자 계정 &nbsp;admin&nbsp;/&nbsp;1234<br>로그인 후 설정 탭에서 계정을 추가/삭제할 수 있습니다.</div>
   </div>
 </div>
 
@@ -419,12 +417,12 @@ let logs = [];                    // 활동 로그
 let activeTab = BUSINESSES[0];    // 현재 열려있는 탭
 let sortKeyByBiz = {};            // 사업장별 현재 정렬 기준
 let searchByBiz = {};             // 사업장별 현재 검색 상태 {type, term}
-BUSINESSES.forEach(b => { sortKeyByBiz[b] = 'payment'; searchByBiz[b] = {type:'vendor', term:''}; });
+BUSINESSES.forEach(b => { sortKeyByBiz[b] = {key:'payment', dir:'asc'}; searchByBiz[b] = {type:'vendor', term:''}; });
 
 let confirmCallback = null;       // 확인 모달에서 "예"를 눌렀을 때 실행할 함수
 let editingOrderId = null;        // 현재 수정 모달에서 편집 중인 발주 문서 id
 let dragOrdererId = null;         // 발주자 드래그 정렬 시 현재 드래그 중인 문서 id
-let summarySortKey = 'payment';   // 요약탭(전체 사업장 통합) 정렬 기준
+let summarySort = {key:'payment', dir:'asc'}; // 요약탭(전체 사업장 통합) 정렬 기준
 let summarySearch = {type:'vendor', term:''}; // 요약탭 검색 상태
 
 /* ==================================================================================
@@ -599,21 +597,30 @@ function ordererDisplay(o){
   return list.length ? list.join(', ') : '-';
 }
 
-function sortOrders(list, key){
+function sortOrders(list, key, dir){
   // 클릭한 기준을 1순위로 하고, 나머지 항목을 보조 정렬 기준으로 사용합니다.
+  // dir이 'desc'면 1순위 기준만 역순으로 뒤집고, 보조 기준은 항상 가나다순을 유지합니다.
   const order = key === 'payment' ? ['payment','vendor','orderer']
               : key === 'vendor'  ? ['vendor','payment','orderer']
               : key === 'orderer' ? ['orderer','payment','vendor']
               : ['business','payment','vendor','orderer']; // 'business' (사업장순)
+  const mul = dir === 'desc' ? -1 : 1;
   return [...list].sort((a,b)=>{
-    for(const k of order){
+    for(let idx=0; idx<order.length; idx++){
+      const k = order[idx];
       const av = k === 'orderer' ? ordererList(a).join(', ') : a[k];
       const bv = k === 'orderer' ? ordererList(b).join(', ') : b[k];
-      const c = koCompare(av, bv);
+      let c = koCompare(av, bv);
+      if(idx === 0) c *= mul;
       if(c !== 0) return c;
     }
     return 0;
   });
+}
+// 헤더 옆에 표시할 정렬 방향 화살표
+function sortArrow(state, key){
+  if(!state || state.key !== key) return '';
+  return state.dir === 'desc' ? ' ▼' : ' ▲';
 }
 function filterOrders(list, search){
   if(!search || !search.term) return list;
@@ -685,7 +692,7 @@ function renderOrderRow(o, showBusiness){
 function renderBusinessTab(biz){
   const list = ordersOf(biz);
   const vendorNames = [...new Set(list.map(o=>o.vendor).filter(Boolean))];
-  const sorted = sortOrders(filterOrders(list, searchByBiz[biz]), sortKeyByBiz[biz]);
+  const sorted = sortOrders(filterOrders(list, searchByBiz[biz]), sortKeyByBiz[biz].key, sortKeyByBiz[biz].dir);
   const search = searchByBiz[biz];
 
   const rowsHtml = sorted.length ? sorted.map(o => renderOrderRow(o, false)).join('')
@@ -743,11 +750,6 @@ function renderBusinessTab(biz){
           <button class="btn-ghost btn-sm" onclick="onSearchClick('${biz}')">검색</button>
           ${search.term ? `<button class="btn-ghost btn-sm search-reset" onclick="onSearchClear('${biz}')">초기화</button>` : ''}
         </div>
-        <div class="sort-group">
-          <button class="${sortKeyByBiz[biz]==='payment'?'active':''}" onclick="onSortClick('${biz}','payment')">결제순</button>
-          <button class="${sortKeyByBiz[biz]==='vendor'?'active':''}" onclick="onSortClick('${biz}','vendor')">거래처순</button>
-          <button class="${sortKeyByBiz[biz]==='orderer'?'active':''}" onclick="onSortClick('${biz}','orderer')">발주자순</button>
-        </div>
         <button class="btn-ghost btn-sm" onclick="downloadExcel('${biz}')">엑셀 다운로드</button>
       </div>
       <div style="overflow-x:auto;">
@@ -757,11 +759,11 @@ function renderBusinessTab(biz){
             <col style="width:9%"><col style="width:14%"><col style="width:14%">
           </colgroup>
           <thead><tr>
-            <th>결제</th>
-            <th>거래처</th>
+            <th class="sortable-th" onclick="onHeaderSortClick('${biz}','payment')">결제${sortArrow(sortKeyByBiz[biz],'payment')}</th>
+            <th class="sortable-th" onclick="onHeaderSortClick('${biz}','vendor')">거래처${sortArrow(sortKeyByBiz[biz],'vendor')}</th>
             <th>품목</th>
             <th>발주방법</th>
-            <th>발주자</th>
+            <th class="sortable-th" onclick="onHeaderSortClick('${biz}','orderer')">발주자${sortArrow(sortKeyByBiz[biz],'orderer')}</th>
             <th>관리</th>
           </tr></thead>
           <tbody>${rowsHtml}</tbody>
@@ -783,8 +785,13 @@ function onSearchClear(biz){
   searchByBiz[biz] = { type: searchByBiz[biz].type, term:'' };
   renderBusinessTab(biz);
 }
-function onSortClick(biz, key){
-  sortKeyByBiz[biz] = key;
+function onHeaderSortClick(biz, key){
+  const cur = sortKeyByBiz[biz];
+  if(cur.key === key){
+    cur.dir = cur.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortKeyByBiz[biz] = { key, dir:'asc' };
+  }
   renderBusinessTab(biz);
 }
 
@@ -895,8 +902,8 @@ document.getElementById('confirmYesBtn').addEventListener('click', ()=>{
 ================================================================================== */
 function renderSummaryTab(){
   const filtered = filterOrders(orders, summarySearch);
-  const sorted = sortOrders(filtered, summarySortKey);
-  const grouping = summarySortKey === 'vendor'; // 거래처순일 때만 같은 거래처를 묶어서 표시
+  const sorted = sortOrders(filtered, summarySort.key, summarySort.dir);
+  const grouping = summarySort.key === 'vendor'; // 거래처순일 때만 같은 거래처를 묶어서 표시
 
   const bizClass = { '꽃밥마켓':'biz-market', '꽃밥에피다':'biz-epida', '보자기꽃밥':'biz-bojagi' };
 
@@ -970,12 +977,6 @@ function renderSummaryTab(){
           <button class="btn-ghost btn-sm" onclick="onSummarySearchClick()">검색</button>
           ${summarySearch.term ? `<button class="btn-ghost btn-sm search-reset" onclick="onSummarySearchClear()">초기화</button>` : ''}
         </div>
-        <div class="sort-group">
-          <button class="${summarySortKey==='payment'?'active':''}" onclick="onSummarySortClick('payment')">결제순</button>
-          <button class="${summarySortKey==='vendor'?'active':''}" onclick="onSummarySortClick('vendor')">거래처순</button>
-          <button class="${summarySortKey==='orderer'?'active':''}" onclick="onSummarySortClick('orderer')">발주자순</button>
-          <button class="${summarySortKey==='business'?'active':''}" onclick="onSummarySortClick('business')">사업장순</button>
-        </div>
         <button class="btn-ghost btn-sm" onclick="downloadSummaryExcel()">엑셀 다운로드</button>
       </div>
       <div style="overflow-x:auto;">
@@ -985,12 +986,12 @@ function renderSummaryTab(){
             <col style="width:10%"><col style="width:13%"><col style="width:16%"><col style="width:13%">
           </colgroup>
           <thead><tr>
-            <th>거래처</th>
-            <th>결제</th>
+            <th class="sortable-th" onclick="onSummaryHeaderSortClick('vendor')">거래처${sortArrow(summarySort,'vendor')}</th>
+            <th class="sortable-th" onclick="onSummaryHeaderSortClick('payment')">결제${sortArrow(summarySort,'payment')}</th>
             <th>품목</th>
             <th>발주방법</th>
-            <th>발주자</th>
-            <th>사업장</th>
+            <th class="sortable-th" onclick="onSummaryHeaderSortClick('orderer')">발주자${sortArrow(summarySort,'orderer')}</th>
+            <th class="sortable-th" onclick="onSummaryHeaderSortClick('business')">사업장${sortArrow(summarySort,'business')}</th>
             <th>관리</th>
           </tr></thead>
           <tbody>${rowsHtml}</tbody>
@@ -999,8 +1000,12 @@ function renderSummaryTab(){
     </div>
   `;
 }
-function onSummarySortClick(key){
-  summarySortKey = key;
+function onSummaryHeaderSortClick(key){
+  if(summarySort.key === key){
+    summarySort.dir = summarySort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    summarySort = { key, dir:'asc' };
+  }
   renderSummaryTab();
 }
 function onSummarySearchClick(){
@@ -1259,7 +1264,7 @@ async function triggerXlsxDownload(workbook, filename){
 
 // 사업장 탭 : 결제/거래처/품목/발주방법/발주자 5개 열 (현재 검색/정렬 상태 기준)
 async function downloadExcel(biz){
-  const list = sortOrders(filterOrders(ordersOf(biz), searchByBiz[biz]), sortKeyByBiz[biz]);
+  const list = sortOrders(filterOrders(ordersOf(biz), searchByBiz[biz]), sortKeyByBiz[biz].key, sortKeyByBiz[biz].dir);
   const wb = new ExcelJS.Workbook();
   buildStyledSheet(
     wb, biz,
@@ -1272,7 +1277,7 @@ async function downloadExcel(biz){
 
 // 요약 탭 : 전체 사업장 통합, 화면과 동일한 열 순서(거래처 우선) + 사업장 열 (현재 검색/정렬 상태 기준)
 async function downloadSummaryExcel(){
-  const list = sortOrders(filterOrders(orders, summarySearch), summarySortKey);
+  const list = sortOrders(filterOrders(orders, summarySearch), summarySort.key, summarySort.dir);
   const wb = new ExcelJS.Workbook();
   buildStyledSheet(
     wb, '꽃밥이야기',
