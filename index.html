@@ -310,7 +310,18 @@ async function doLogin(){
     await signInWithEmailAndPassword(auth, SHARED_EMAIL, pw);
     $("pw").value = "";
   }catch(e){
-    $("loginErr").textContent = "비밀번호가 올바르지 않습니다.";
+    const code = (e && e.code) ? e.code : String((e && e.message) || e);
+    let msg;
+    if(code.includes("wrong-password") || code.includes("invalid-credential")) msg = "비밀번호가 올바르지 않습니다.";
+    else if(code.includes("user-not-found")) msg = "이 이메일 계정이 없습니다. (콘솔 Users에서 확인)";
+    else if(code.includes("invalid-email")) msg = "이메일 형식 오류 (SHARED_EMAIL 확인).";
+    else if(code.includes("api-key") || code.includes("invalid-api")) msg = "Firebase 설정(apiKey) 오류입니다.";
+    else if(code.includes("operation-not-allowed")) msg = "이메일/비밀번호 로그인이 꺼져 있습니다.";
+    else if(code.includes("network")) msg = "네트워크 오류입니다.";
+    else if(code.includes("too-many-requests")) msg = "시도가 많아 잠시 후 다시 시도하세요.";
+    else msg = "로그인 오류";
+    $("loginErr").textContent = msg + "  [" + code + "]";
+    console.error("login error:", code, e);
   }finally{
     $("loginBtn").disabled = false; $("loginBtn").textContent = "입력";
   }
