@@ -413,6 +413,26 @@ function render(){
   renderList(panel);
 }
 function renderList(panel){
+  let h=`
+  <div class="toolbar">
+    <button class="btn btn-primary" id="addBtn">+ 거래처 추가</button>
+    <div class="search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input id="searchInput" type="text" placeholder="거래처·품목·발주자 검색" value="${esc(ui.q)}">
+    </div>
+    <span class="count" id="listCount"></span>
+    <div class="spacer"></div>
+    <button class="btn btn-line" id="exp1">⬇ 발주리스트 내보내기</button>
+    <button class="btn btn-line" id="exp2">⬇ 업체별 형식 내보내기</button>
+  </div>
+  <div id="listArea"></div>`;
+  panel.innerHTML=h;
+  wireToolbar(panel);
+  renderListBody(panel);
+}
+/* 검색 입력창은 유지하고 목록만 다시 그림 (한글 IME 조합이 끊기지 않도록) */
+function renderListBody(panel){
+  const area=panel.querySelector("#listArea"); if(!area) return;
   let list=records().slice();
   const q=ui.q.trim().toLowerCase();
   if(q){
@@ -423,21 +443,11 @@ function renderList(panel){
     list.sort((a,b)=> sortVal(a,ui.sortKey).localeCompare(sortVal(b,ui.sortKey),"ko")*ui.sortDir);
   }
   const arrow=k=> ui.sortKey===k?`<span class="arrow">${ui.sortDir>0?'▲':'▼'}</span>`:`<span class="arrow" style="opacity:.2">↕</span>`;
-  let h=`
-  <div class="toolbar">
-    <button class="btn btn-primary" id="addBtn">+ 거래처 추가</button>
-    <div class="search">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
-      <input id="searchInput" type="text" placeholder="거래처·품목·발주자 검색" value="${esc(ui.q)}">
-    </div>
-    <span class="count">${list.length}개 거래처</span>
-    <div class="spacer"></div>
-    <button class="btn btn-line" id="exp1">⬇ 발주리스트 내보내기</button>
-    <button class="btn btn-line" id="exp2">⬇ 업체별 형식 내보내기</button>
-  </div>`;
+  panel.querySelector("#listCount").textContent=`${list.length}개 거래처`;
+  let h="";
   if(!records().length){
     h+=`<div class="empty">이 사업장에는 아직 거래처가 없습니다.<br>“+ 거래처 추가”로 시작하세요.</div>`;
-    panel.innerHTML=h; wireToolbar(panel); return;
+    area.innerHTML=h; return;
   }
   h+=`<table><thead><tr>
     <th class="sortable" data-k="payment">결제${arrow("payment")}</th>
@@ -469,24 +479,22 @@ function renderList(panel){
       </td></tr>`;
   });
   h+=`</tbody></table>`;
-  panel.innerHTML=h;
-  wireToolbar(panel);
-  panel.querySelectorAll("th.sortable").forEach(th=> th.onclick=()=>{
+  area.innerHTML=h;
+  area.querySelectorAll("th.sortable").forEach(th=> th.onclick=()=>{
     const k=th.dataset.k;
     if(ui.sortKey===k) ui.sortDir*=-1; else { ui.sortKey=k; ui.sortDir=1; }
-    render();
+    renderListBody(panel);
   });
-  panel.querySelectorAll("tbody tr[data-id]").forEach(tr=> tr.onclick=e=>{
+  area.querySelectorAll("tbody tr[data-id]").forEach(tr=> tr.onclick=e=>{
     if(e.target.closest(".row-btn")) return; openDetail(tr.dataset.id);
   });
-  panel.querySelectorAll(".row-btn.edit").forEach(b=> b.onclick=e=>{ e.stopPropagation(); askEdit(b.dataset.id); });
-  panel.querySelectorAll(".row-btn.del").forEach(b=> b.onclick=e=>{ e.stopPropagation(); askDelete(b.dataset.id); });
+  area.querySelectorAll(".row-btn.edit").forEach(b=> b.onclick=e=>{ e.stopPropagation(); askEdit(b.dataset.id); });
+  area.querySelectorAll(".row-btn.del").forEach(b=> b.onclick=e=>{ e.stopPropagation(); askDelete(b.dataset.id); });
 }
 function wireToolbar(panel){
   const add=panel.querySelector("#addBtn"); if(add) add.onclick=()=>openForm(null);
   const s=panel.querySelector("#searchInput");
-  if(s) s.oninput=()=>{ ui.q=s.value; renderList($("panel"));
-    const ns=$("panel").querySelector("#searchInput"); if(ns){ ns.focus(); ns.setSelectionRange(ns.value.length,ns.value.length);} };
+  if(s) s.oninput=()=>{ ui.q=s.value; renderListBody(panel); };
   const e1=panel.querySelector("#exp1"); if(e1) e1.onclick=exportOrderList;
   const e2=panel.querySelector("#exp2"); if(e2) e2.onclick=exportUpche;
 }
