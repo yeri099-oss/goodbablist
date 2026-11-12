@@ -199,7 +199,7 @@
 
 <header>
   <div class="ht">
-    <h1>거래처 발주 관리</h1>
+    <h1>거래처 발주 관리 <span id="appVer" style="font-size:12px;font-weight:500;opacity:.7;vertical-align:middle">v1.1.0</span></h1>
     <p>꽃밥마켓 · 꽃밥에피다 · 보자기꽃밥 통합 거래처 리스트</p>
   </div>
   <div class="sync">
@@ -402,6 +402,7 @@ function renderTabs(){
   el.querySelectorAll(".tab").forEach(b=> b.onclick=()=>{
     ui.tab=b.dataset.tab;
     if(ui.tab!=="설정"){ ui.site=ui.tab; ui.q=""; }
+    $("panel").dataset.tab="";
     render();
   });
 }
@@ -409,7 +410,10 @@ function render(){
   if(!authed) return;
   renderTabs();
   const panel=$("panel");
-  if(ui.tab==="설정"){ panel.innerHTML=""; panel.appendChild(renderSettings()); return; }
+  if(ui.tab==="설정"){ panel.dataset.tab="설정"; panel.innerHTML=""; panel.appendChild(renderSettings()); return; }
+  // 같은 탭이 이미 그려져 있으면 검색창은 건드리지 않고 목록만 갱신 (실시간 동기화 중 한글 입력 보호)
+  if(panel.dataset.tab===ui.tab && panel.querySelector("#listArea")){ renderListBody(panel); return; }
+  panel.dataset.tab=ui.tab;
   renderList(panel);
 }
 function renderList(panel){
